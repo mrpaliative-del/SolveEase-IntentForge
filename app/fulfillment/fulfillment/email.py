@@ -1,77 +1,15 @@
 
 import html
 import logging
-import re
 
-import resend
+import httpx
 
 from app.config import settings
 
-
 logger = logging.getLogger(__name__)
 
-# Configure the SDK once at module initialization.
-if settings.RESEND_API_KEY:
-    resend.api_key = settings.RESEND_API_KEY
-
-
-def _render_report_html(
-    task_id: str,
-    tier: str,
-    solution_content: str,
-) -> str:
-    """Render an HTML-safe report email."""
-    safe_task_id = html.escape(task_id)
-    safe_tier = html.escape(tier)
-
-    # Escape source-derived content first, then preserve newlines.
-    safe_content = html.escape(solution_content)
-    safe_content = safe_content.replace("\n", "<br>\n")
-
-    return f"""
-    <div style="
-        font-family:Arial,sans-serif;
-        max-width:600px;
-        margin:0 auto;
-        background:#0f172a;
-        color:#f8fafc;
-        padding:30px;
-        border-radius:12px;
-    ">
-        <h2 style="color:#34d399;">
-            SolveEase IntentForge
-        </h2>
-
-        <p>
-            Your report is ready. Reference:
-            <code>{safe_task_id}</code>
-        </p>
-
-        <p>Report tier: <strong>{safe_tier}</strong></p>
-
-        <hr style="border-color:#334155;margin:20px 0;">
-
-        <div style="
-            background:#1e293b;
-            padding:20px;
-            border-radius:8px;
-            font-size:14px;
-            line-height:1.7;
-            overflow-wrap:anywhere;
-        ">
-            {safe_content}
-        </div>
-
-        <p style="
-            margin-top:30px;
-            font-size:12px;
-            color:#94a3b8;
-        ">
-            This report is based on the evidence described in its contents.
-            Suggested fixes should be validated before production use.
-        </p>
-    </div>
-    """
+RESEND_API_URL = "https://api.resend.com/emails"
+RESEND_TIMEOUT = 20.0
 
 
 def send_fulfillment_email(
@@ -81,77 +19,84 @@ def send_fulfillment_email(
     solution_content: str,
 ) -> bool:
     """
-    Submit a report email to Resend.
+    Submit a purchased report to Resend.
 
-    True means the provider accepted the request, not that final delivery
-    to the recipient's inbox has been confirmed.
+    Returns True only when Resend accepts the request and returns
+    an email ID. Acceptance does not guarantee inbox delivery.
     """
-    if not settings.RESEND_API_KEY:
-        logger.error("Email dispatch unavailable: RESEND_API_KEY is missing.")
+    api_key = getattr(settings, "RESEND_API_KEY", None)
+    from_email = getattr(settings, "RESEND_FROM_EMAIL", None)
+
+    if isinstance(api_key, bytes):
+        api_key = api_key.decode("utf-8")
+
+    if not api_key or not from_email:
+        logger.error("Email fulfillment is not configured")
         return False
 
-    sender = settings.RESEND_FROM_EMAIL
-    if not sender:
-        logger.error("Email dispatch unavailable: RESEND_FROM_EMAIL is missing.")
-        return False
+    safe_task_id = html.escape(str(task_id))
+    safe_tier = html.escape(str(tier))
+    safe_content = html.escape(str(solution_content))
 
-    if not isinstance(to_email, str):
-        return False
+    # Preserve line breaks while escaping all untrusted report content.
+    safe_content = safe_content.replace("\n", "<br>\n")
 
-    to_email = to_email.strip()
-
-    # Basic format check; production should also validate purchase ownership.
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", to_email):
-        logger.warning("Email dispatch rejected: invalid recipient format.")
-        return False
-
-    if not isinstance(task_id, str) or not task_id.strip():
-        return False
-
-    if not isinstance(tier, str) or not tier.strip():
-        return False
-
-    if not isinstance(solution_content, str) or not solution_content.strip():
-        return False
+    payload = {
+        "from": from_email,
+        "to": [to_email],
+        "subject": f"SolveEase report: {tier} — {task_id}",
+        "text": (
+            f"SolveEase {tier}\n"
+            f"Report ID: {task_id}\n\n"
+            f"{solution_content}\n\n"
+            "This report provides diagnostic guidance and does not "
+            "guarantee that a technical issue has been resolved."
+        ),
+        "html": (
+            "<div style='font-family:Arial,sans-serif;"
+            "max-width:700px;margin:auto;line-height:1.6'>"
+            "<h2>SolveEase IntentForge</h2>"
+            f"<p><strong>Report:</strong> {safe_task_id}</p>"
+            f"<p><strong>Type:</strong> {safe_tier}</p>"
+            "<hr>"
+            f"<div>{safe_content}</div>"
+            "<hr>"
+            "<p><small>This report provides diagnostic guidance. "
+            "It does not guarantee that a technical issue has "
+            "been resolved.</small></p>"
+            "</div>"
+        ),
+    }
 
     try:
-        response = resend.Emails.send({
-            "from": sender,
-            "to": [to_email],
-            "subject": (
-                f"Your SolveEase IntentForge report: {tier.strip()}"
-            ),
-            "html": _render_report_html(
-                task_id.strip(),
-                tier.strip(),
-                solution_content,
-            ),
-        })
+        response = httpx.post(
+            RESEND_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=RESEND_TIMEOUT,
+        )
 
-        # The SDK response normally contains an email ID on acceptance.
-        # Avoid assuming acceptance equals delivery.
-        if isinstance(response, dict):
-            email_id = response.get("id")
-        else:
-            email_id = getattr(response, "id", None)
-
-        if not email_id:
-            logger.warning(
-                "Email provider response did not contain an email ID."
+        if response.status_code not in (200, 201):
+            logger.error(
+                "Resend rejected a fulfillment request; HTTP %s",
+                response.status_code,
             )
             return False
 
+        result = response.json()
+        if not isinstance(result, dict) or not result.get("id"):
+            logger.error("Resend returned no email ID")
+            return False
+
         logger.info(
-            "Report email accepted by provider; task_id=%s email_id=%s",
+            "Resend accepted fulfillment for report %s",
             task_id,
-            email_id,
         )
         return True
 
-    except Exception:
-        # Avoid logging credentials, recipient addresses, or report contents.
-        logger.exception(
-            "Email provider request failed; task_id=%s",
-            task_id,
-        )
+    except (httpx.HTTPError, ValueError):
+        logger.exception("Email fulfillment request failed")
         return False
