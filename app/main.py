@@ -1,4 +1,3 @@
-
 import asyncio
 import hashlib
 import html
@@ -20,7 +19,7 @@ from app.discovery.connectors import (
     fetch_reddit_json,
     fetch_rss_feed,
 )
-from app.discovery.filters import is_actionable_intent
+from app.discovery.filters import evaluate_actionable_intent
 from app.discovery.taxonomy import MEGA_TAXONOMY
 from app.fulfillment.worker import (
     init_fulfillment_queue,
@@ -141,9 +140,17 @@ def _source_timestamp(payload: dict) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _process_signal(payload: dict) -> Optional[dict]:
-    if not isinstance(payload, dict):
+def _process_signal(
+    payload: dict,
+    rejected: Optional[Counter] = None,
+) -> Optional[dict]:
+    def reject(reason: str) -> None:
+        if rejected is not None:
+            rejected[reason] += 1
         return None
+
+    if not isinstance(payload, dict):
+        return reject("invalid_payload")
 
     text = _normalize_text(
         payload.get("text")
@@ -152,27 +159,31 @@ def _process_signal(payload: dict) -> Optional[dict]:
         or ""
     )
     title = _normalize_text(payload.get("title") or "")
-    source = _normalize_text(payload.get("source"))
+    source = _normalize_text(
+        payload.get("source") or payload.get("source_type") or ""
+    )
 
     if not text or not source:
-        return None
+        return reject("missing_text_or_source")
 
-    # Evaluate the title separately where the connector provides one.
     lead = title or text[:240]
-    evidence_text = f"{lead} {text[:700]}"
+    evidence_text = f"{lead} {text[:1500]}"
 
+    # Exclude obvious editorial titles, but allow a clear,
+    # explicit help request or defect report to be evaluated.
     if EDITORIAL_RE.search(lead):
-        return None
+        evaluation = evaluate_actionable_intent(evidence_text)
+        if not evaluation["actionable"]:
+            return reject("editorial_or_announcement")
 
-    if not PROBLEM_RE.search(evidence_text):
-        return None
-
-    if not is_actionable_intent(evidence_text):
-        return None
+    evaluation = evaluate_actionable_intent(evidence_text)
+    if not evaluation["actionable"]:
+        status = evaluation.get("status", "unknown")
+        return reject(f"intent_{status}")
 
     matched = _match_taxonomy(evidence_text)
     if matched is None:
-        return None
+        return reject("no_taxonomy_match")
 
     category, spec = matched
 
@@ -183,7 +194,7 @@ def _process_signal(payload: dict) -> Optional[dict]:
             "Invalid price for %s: %r (%s)",
             category, spec.get("price_cents"), exc,
         )
-        return None
+        return reject("invalid_price")
 
     task_hash = _stable_task_hash(payload, text)
     task_id = f"IF-{task_hash[:24]}"
@@ -203,10 +214,13 @@ def _process_signal(payload: dict) -> Optional[dict]:
         saved = IntentRepository.save_task(record)
     except Exception:
         logger.exception("Candidate persistence failed.")
-        return None
+        return reject("persistence_error")
 
     if not saved:
-        return None
+        return reject("duplicate_or_not_saved")
+
+    if rejected is not None:
+        rejected["saved"] += 1
 
     return {
         "task_id": task_id,
@@ -266,7 +280,7 @@ async def run_telemetry_sweep() -> dict:
     for payload in raw_signals:
         try:
             candidate = await asyncio.to_thread(
-                _process_signal, payload
+                _process_signal, payload, rejected
             )
         except Exception:
             logger.exception("Signal processing failed.")
@@ -275,8 +289,6 @@ async def run_telemetry_sweep() -> dict:
 
         if candidate:
             newly_added.append(candidate)
-        else:
-            rejected["filtered_or_duplicate"] += 1
 
     try:
         total_count = await asyncio.to_thread(
@@ -293,7 +305,7 @@ async def run_telemetry_sweep() -> dict:
         "total=%s duration=%ss rejection_breakdown=%s",
         len(raw_signals),
         len(newly_added),
-        sum(rejected.values()),
+        sum(v for k, v in rejected.items() if k != "saved"),
         total_count if total_count is not None else "unavailable",
         duration,
         dict(rejected),
@@ -333,7 +345,7 @@ async def run_telemetry_sweep() -> dict:
     return {
         "fetched": len(raw_signals),
         "new_candidates": len(newly_added),
-        "rejected": sum(rejected.values()),
+        "rejected": sum(v for k, v in rejected.items() if k != "saved"),
         "total_stored": total_count,
         "duration_seconds": duration,
     }
