@@ -1,12 +1,10 @@
 
 import logging
-import os
-import sqlite3
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Response, status
 
-from app.config import settings
+from app.storage.database import db_connection
 from app.storage.repository import IntentRepository
 
 router = APIRouter()
@@ -15,10 +13,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/health")
 async def health_check():
-    """
-    Liveness check: confirms the API process can respond.
-    Does not require the database to be available.
-    """
+    """Liveness: confirms the API process can respond."""
     return {
         "status": "healthy",
         "service": "SolveEase IntentForge",
@@ -28,55 +23,35 @@ async def health_check():
 
 @router.get("/ready")
 async def readiness_check(response: Response):
-    """
-    Readiness check: confirms the configured SQLite database is usable.
-    Returns HTTP 503 if the database is not ready.
-    """
-    database_path = settings.DATABASE_PATH
-
+    """Readiness: verifies PostgreSQL connectivity and schema."""
     try:
-        # Verify actual database connectivity rather than relying only
-        # on os.path.exists(), which can be misleading for SQLite.
-        with sqlite3.connect(database_path, timeout=3) as conn:
-            conn.execute("PRAGMA busy_timeout = 3000;")
+        with db_connection() as conn:
             conn.execute("SELECT 1;")
 
-            # Check that the expected table exists.
-            table = conn.execute("""
-                SELECT 1
-                FROM sqlite_master
-                WHERE type = 'table'
-                  AND name = 'mega_intent_firehose'
-                LIMIT 1;
+            row = conn.execute("""
+                SELECT to_regclass('public.mega_intent_firehose')
+                    AS table_name;
             """).fetchone()
 
-            if table is None:
-                raise RuntimeError("Required database table is missing.")
+            if not row or row["table_name"] is None:
+                raise RuntimeError(
+                    "Required discovery table is missing."
+                )
 
         count = IntentRepository.get_total_count()
 
         return {
             "status": "ready",
+            "database": "postgresql",
             "total_stored_tasks": count,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    except (sqlite3.Error, OSError, RuntimeError):
+    except Exception:
         logger.exception("IntentForge readiness check failed.")
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-
         return {
             "status": "not_ready",
             "reason": "Database unavailable or not initialized.",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-    except Exception:
-        logger.exception("Unexpected readiness check failure.")
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-
-        return {
-            "status": "not_ready",
-            "reason": "Readiness check failed.",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
