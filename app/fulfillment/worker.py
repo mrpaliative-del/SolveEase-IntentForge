@@ -1,9 +1,8 @@
 
 import logging
 import random
-import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.storage.database import db_connection
@@ -16,39 +15,19 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
 BASE_RETRY_SECONDS = 15
 MAX_RETRY_SECONDS = 3600
+STALE_LOCK_SECONDS = 600
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def init_fulfillment_queue() -> None:
-    """Create a durable queue for email fulfillment jobs."""
+    """Tables are created by app.storage.database.init_db()."""
     with db_connection() as conn:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS fulfillment_jobs (
-                job_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                purchase_reference TEXT NOT NULL UNIQUE,
-                recipient_email TEXT NOT NULL,
-                tier TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN (
-                        'pending', 'processing', 'retry',
-                        'sent', 'dead'
-                    )),
-                attempts INTEGER NOT NULL DEFAULT 0,
-                next_attempt_at TEXT NOT NULL,
-                locked_at TEXT,
-                last_error TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-        """)
-
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_fulfillment_due
-            ON fulfillment_jobs(status, next_attempt_at);
+            CREATE INDEX IF NOT EXISTS idx_fulfillment_task_status
+            ON fulfillment_jobs(task_id, status);
         """)
 
 
@@ -58,18 +37,7 @@ def enqueue_fulfillment(
     recipient_email: str,
     tier: str,
 ) -> bool:
-    """
-    Queue a paid purchase after the payment layer has verified it.
-
-    purchase_reference must be the verified, unique payment reference.
-    Never call this function based solely on a client checkout redirect.
-    """
-    values = [
-        task_id,
-        purchase_reference,
-        recipient_email,
-        tier,
-    ]
+    values = [task_id, purchase_reference, recipient_email, tier]
 
     if any(not isinstance(v, str) or not v.strip() for v in values):
         raise ValueError("All fulfillment fields must be non-empty strings.")
@@ -80,11 +48,10 @@ def enqueue_fulfillment(
         cursor = conn.execute("""
             INSERT INTO fulfillment_jobs (
                 task_id, purchase_reference, recipient_email, tier,
-                status, attempts, next_attempt_at,
-                created_at, updated_at
+                status, attempts, next_attempt_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-            ON CONFLICT(purchase_reference) DO NOTHING;
+            VALUES (%s, %s, %s, %s, 'pending', 0, %s, %s, %s)
+            ON CONFLICT (purchase_reference) DO NOTHING;
         """, (
             task_id.strip(),
             purchase_reference.strip(),
@@ -98,28 +65,39 @@ def enqueue_fulfillment(
         return cursor.rowcount == 1
 
 
-def _claim_job(task_id: str) -> Optional[dict]:
-    """
-    Atomically claim one due job.
-
-    SQLite's write transaction prevents two workers from claiming the
-    same job simultaneously on the same database.
-    """
+def _claim_next_job() -> Optional[dict]:
     now = utc_now()
+    stale_before = now - timedelta(seconds=STALE_LOCK_SECONDS)
 
     with db_connection() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+        # Recover jobs abandoned by a crashed process.
+        conn.execute("""
+            UPDATE fulfillment_jobs
+            SET status = CASE
+                    WHEN attempts >= %s THEN 'dead'
+                    ELSE 'retry'
+                END,
+                next_attempt_at = %s,
+                locked_at = NULL,
+                last_error = COALESCE(
+                    last_error,
+                    'Recovered stale processing job.'
+                ),
+                updated_at = %s
+            WHERE status = 'processing'
+              AND locked_at < %s;
+        """, (MAX_ATTEMPTS, now, now, stale_before))
 
         row = conn.execute("""
             SELECT *
             FROM fulfillment_jobs
-            WHERE task_id = ?
-              AND status IN ('pending', 'retry')
-              AND next_attempt_at <= ?
-              AND attempts < ?
-            ORDER BY job_id
+            WHERE status IN ('pending', 'retry')
+              AND next_attempt_at <= %s
+              AND attempts < %s
+            ORDER BY next_attempt_at, job_id
+            FOR UPDATE SKIP LOCKED
             LIMIT 1;
-        """, (task_id, now, MAX_ATTEMPTS)).fetchone()
+        """, (now, MAX_ATTEMPTS)).fetchone()
 
         if row is None:
             return None
@@ -128,71 +106,57 @@ def _claim_job(task_id: str) -> Optional[dict]:
             UPDATE fulfillment_jobs
             SET status = 'processing',
                 attempts = attempts + 1,
-                locked_at = ?,
-                updated_at = ?
-            WHERE job_id = ?
+                locked_at = %s,
+                updated_at = %s
+            WHERE job_id = %s
               AND status IN ('pending', 'retry');
         """, (now, now, row["job_id"]))
 
         if cursor.rowcount != 1:
             return None
 
-        claimed = dict(row)
-        claimed["attempts"] = row["attempts"] + 1
-        return claimed
+        job = dict(row)
+        job["attempts"] = int(row["attempts"]) + 1
+        job["status"] = "processing"
+        return job
 
 
 def _schedule_retry(job: dict, error: str) -> None:
-    attempts = job["attempts"]
-
+    attempts = int(job["attempts"])
     delay = min(
         BASE_RETRY_SECONDS * (2 ** max(0, attempts - 1)),
         MAX_RETRY_SECONDS,
     )
-
-    # Jitter prevents synchronized retry bursts.
     delay += random.randint(0, min(10, delay // 4 + 1))
 
     now = utc_now()
-    next_attempt = datetime.fromtimestamp(
-        time.time() + delay,
-        timezone.utc,
-    ).isoformat()
-
-    status = "dead" if attempts >= MAX_ATTEMPTS else "retry"
+    next_attempt = now + timedelta(seconds=delay)
+    new_status = "dead" if attempts >= MAX_ATTEMPTS else "retry"
 
     with db_connection() as conn:
         conn.execute("""
             UPDATE fulfillment_jobs
-            SET status = ?,
-                next_attempt_at = ?,
-                last_error = ?,
+            SET status = %s,
+                next_attempt_at = %s,
+                last_error = %s,
                 locked_at = NULL,
-                updated_at = ?
-            WHERE job_id = ?
+                updated_at = %s
+            WHERE job_id = %s
               AND status = 'processing';
         """, (
-            status,
+            new_status,
             next_attempt,
             error[:500],
             now,
             job["job_id"],
         ))
 
-
-def _mark_sent(job: dict) -> None:
-    now = utc_now()
-
-    with db_connection() as conn:
         conn.execute("""
-            UPDATE fulfillment_jobs
-            SET status = 'sent',
-                last_error = NULL,
-                locked_at = NULL,
-                updated_at = ?
-            WHERE job_id = ?
-              AND status = 'processing';
-        """, (now, job["job_id"]))
+            UPDATE verified_payments
+            SET status = 'failed', updated_at = %s
+            WHERE reference = %s
+              AND status <> 'sent';
+        """, (int(time.time()), job["purchase_reference"]))
 
 
 def _load_task(task_id: str) -> Optional[dict]:
@@ -201,22 +165,37 @@ def _load_task(task_id: str) -> Optional[dict]:
             SELECT task_id, timestamp, source, task_category,
                    raw_signal, micro_price, action
             FROM mega_intent_firehose
-            WHERE task_id = ?;
+            WHERE task_id = %s;
         """, (task_id,)).fetchone()
 
         return dict(row) if row else None
 
 
-def process_retryable_job(task_id: str) -> bool:
-    """
-    Process one due fulfillment job for a task.
+def _mark_sent(job: dict) -> None:
+    now = utc_now()
+    epoch = int(time.time())
 
-    Returns True only when the provider accepts the email and the
-    queue records the job as sent. False means no completed delivery
-    was recorded; the caller can inspect the queue for its status.
-    """
-    job = _claim_job(task_id)
+    with db_connection() as conn:
+        conn.execute("""
+            UPDATE fulfillment_jobs
+            SET status = 'sent',
+                last_error = NULL,
+                locked_at = NULL,
+                updated_at = %s
+            WHERE job_id = %s
+              AND status = 'processing';
+        """, (now, job["job_id"]))
 
+        conn.execute("""
+            UPDATE verified_payments
+            SET status = 'sent', updated_at = %s
+            WHERE reference = %s;
+        """, (epoch, job["purchase_reference"]))
+
+
+def process_next_fulfillment_job() -> bool:
+    """Process one due job; return True if a job was claimed."""
+    job = _claim_next_job()
     if job is None:
         return False
 
@@ -225,12 +204,16 @@ def process_retryable_job(task_id: str) -> bool:
 
         if task is None:
             _schedule_retry(job, "Task record not found.")
-            return False
+            return True
 
-        # The worker creates the report from the stored signal.
+        raw_signal = task.get("raw_signal")
+        if not isinstance(raw_signal, str) or not raw_signal.strip():
+            _schedule_retry(job, "Report content is unavailable.")
+            return True
+
         report = generate_tiered_playbook(
             job["tier"],
-            task["raw_signal"],
+            raw_signal,
             source_url=task.get("source"),
             category=task.get("task_category"),
         )
@@ -243,16 +226,26 @@ def process_retryable_job(task_id: str) -> bool:
         )
 
         if not accepted:
-            _schedule_retry(job, "Email provider did not confirm acceptance.")
-            return False
+            _schedule_retry(
+                job,
+                "Email provider did not confirm acceptance.",
+            )
+            return True
 
         _mark_sent(job)
+        logger.info(
+            "Fulfillment provider accepted job %s.",
+            job["job_id"],
+        )
         return True
 
     except Exception as exc:
         logger.exception(
-            "Fulfillment processing failed for job %s",
+            "Fulfillment processing failed for job %s.",
             job["job_id"],
         )
-        _schedule_retry(job, str(exc))
-        return False
+        try:
+            _schedule_retry(job, str(exc))
+        except Exception:
+            logger.exception("Unable to schedule fulfillment retry.")
+        return True
