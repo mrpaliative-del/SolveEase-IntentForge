@@ -141,7 +141,9 @@ def _process_signal(payload: dict) -> Optional[dict]:
 
     category, spec = matched
     try:
-        price_cents = _price_to_cents(spec.get("price"))
+        price_cents = _price_to_cents(
+    spec.get("price_cents")
+        )
     except ValueError:
         logger.warning(
             "Skipping category %s because its price is invalid.", category
