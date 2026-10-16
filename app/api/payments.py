@@ -3,9 +3,7 @@ import hashlib
 import hmac
 import logging
 import os
-import sqlite3
 import time
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -15,19 +13,14 @@ from pydantic import BaseModel, EmailStr, Field
 from app.config import settings
 from app.storage.database import db_connection
 from app.storage.repository import IntentRepository
-from app.fulfillment.playbooks import generate_tiered_playbook
-from app.fulfillment.email import send_fulfillment_email
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 PAYSTACK_BASE_URL = "https://api.paystack.co"
-PAYSTACK_CURRENCY = os.getenv("PAYSTACK_CURRENCY", "NGN").upper()
+PAYSTACK_CURRENCY = os.getenv("PAYSTACK_CURRENCY", "NGN").strip().upper()
 PAYSTACK_TIMEOUT = 20.0
 
-# Amounts use the smallest currency unit:
-# NGN: kobo; USD: cents.
-# Configure these environment variables in Render.
 PRICE_TABLE = {
     "brief": int(os.getenv("INTENTFORGE_BRIEF_AMOUNT", "100")),
     "playbook": int(os.getenv("INTENTFORGE_PLAYBOOK_AMOUNT", "300")),
@@ -54,16 +47,11 @@ class InitializePaymentRequest(BaseModel):
 
 def _secret_key() -> str:
     value = settings.PAYSTACK_SECRET_KEY
-    if isinstance(value, bytes):
-        value = value.decode("utf-8")
-    value = str(value).strip()
-
     if not value or value.startswith("sk_live_your_"):
         raise HTTPException(
             status_code=503,
             detail="Payment service is not configured",
         )
-
     return value
 
 
@@ -84,68 +72,12 @@ def _price_for_tier(tier: str) -> int:
     return amount
 
 
-def _init_payment_ledger() -> None:
-    with db_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS verified_payments (
-                reference TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                customer_email TEXT NOT NULL,
-                tier TEXT NOT NULL,
-                amount INTEGER NOT NULL,
-                currency TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN (
-                        'pending', 'processing', 'sent', 'failed'
-                    )),
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )
-            """
-        )
-
-
-def _get_task(task_id: str) -> dict[str, Any] | None:
-    row = IntentRepository.get_task_by_id(task_id)
-    if row is None:
-        return None
-
-    # Support dictionary results, sqlite3.Row, and the repository's
-    # documented eight-column tuple layout.
-    if isinstance(row, dict):
-        task = dict(row)
-    elif hasattr(row, "keys"):
-        task = dict(row)
-    elif isinstance(row, (tuple, list)) and len(row) >= 8:
-        task = {
-            "task_hash": row[0],
-            "task_id": row[1],
-            "timestamp": row[2],
-            "source": row[3],
-            "task_category": row[4],
-            "raw_signal": row[5],
-            "micro_price": row[6],
-            "action": row[7],
-        }
-    else:
-        logger.error("Unexpected task record format")
-        raise HTTPException(
-            status_code=500,
-            detail="Unable to read the selected report",
-        )
-
-    return task
-
-
 async def _paystack_get(path: str) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {_secret_key()}"}
-
     try:
         async with httpx.AsyncClient(timeout=PAYSTACK_TIMEOUT) as client:
             response = await client.get(
                 f"{PAYSTACK_BASE_URL}{path}",
-                headers=headers,
+                headers={"Authorization": f"Bearer {_secret_key()}"},
             )
             response.raise_for_status()
             result = response.json()
@@ -165,107 +97,12 @@ async def _paystack_get(path: str) -> dict[str, Any]:
     return result
 
 
-def _claim_fulfillment(
-    reference: str,
-    task_id: str,
-    email: str,
-    tier: str,
-    amount: int,
-) -> str:
-    """Return claimed, sent, or busy. The unique reference prevents repeats."""
-    now = int(time.time())
-
-    with db_connection() as conn:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO verified_payments
-            (reference, task_id, customer_email, tier, amount, currency,
-             status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-            """,
-            (
-                reference,
-                task_id,
-                email,
-                tier,
-                amount,
-                PAYSTACK_CURRENCY,
-                now,
-                now,
-            ),
-        )
-
-        existing = conn.execute(
-            """
-            SELECT task_id, customer_email, tier, amount, currency, status
-            FROM verified_payments
-            WHERE reference = ?
-            """,
-            (reference,),
-        ).fetchone()
-
-        if existing is None:
-            raise RuntimeError("Payment ledger record was not created")
-
-        # Never let the same Paystack reference unlock another report.
-        values = tuple(existing)
-        if (
-            values[0] != task_id
-            or values[1].lower() != email.lower()
-            or values[2] != tier
-            or int(values[3]) != amount
-            or values[4] != PAYSTACK_CURRENCY
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail="Payment reference does not match this purchase",
-            )
-
-        if values[5] == "sent":
-            return "sent"
-
-        # Recover abandoned claims after a process crash.
-        cursor = conn.execute(
-            """
-            UPDATE verified_payments
-            SET status = 'processing', updated_at = ?
-            WHERE reference = ?
-              AND (
-                    status IN ('pending', 'failed')
-                    OR (
-                        status = 'processing'
-                        AND updated_at < ?
-                    )
-              )
-            """,
-            (now, reference, now - 600),
-        )
-
-        if cursor.rowcount == 1:
-            return "claimed"
-
-        return "busy"
-
-
-def _mark_payment(reference: str, status: str) -> None:
-    with db_connection() as conn:
-        conn.execute(
-            """
-            UPDATE verified_payments
-            SET status = ?, updated_at = ?
-            WHERE reference = ?
-            """,
-            (status, int(time.time()), reference),
-        )
-
-
 @router.post("/api/v1/payment/initialize")
 async def initialize_payment(payload: InitializePaymentRequest):
-    tier_key = _normalize_tier(payload.tier)
-    amount = _price_for_tier(tier_key)
-    tier_name = DISPLAY_TIERS[tier_key]
+    tier = _normalize_tier(payload.tier)
+    amount = _price_for_tier(tier)
 
-    task = _get_task(payload.task_id)
+    task = IntentRepository.get_task_by_id(payload.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
@@ -279,19 +116,15 @@ async def initialize_payment(payload: InitializePaymentRequest):
         "email": str(payload.email),
         "amount": amount,
         "currency": PAYSTACK_CURRENCY,
-        "callback_url": (
-            f"{settings.WEB_APP_URL.rstrip('/')}/payment/callback"
-        ),
+        "callback_url": f"{settings.WEB_APP_URL}/payment/callback",
         "metadata": {
             "task_id": payload.task_id,
-            "tier": tier_key,
-            "custom_fields": [
-                {
-                    "display_name": "Report",
-                    "variable_name": "report",
-                    "value": payload.task_id,
-                }
-            ],
+            "tier": tier,
+            "custom_fields": [{
+                "display_name": "Report",
+                "variable_name": "report",
+                "value": payload.task_id,
+            }],
         },
     }
 
@@ -314,10 +147,15 @@ async def initialize_payment(payload: InitializePaymentRequest):
             detail="Unable to initialize payment",
         )
 
-    data = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or result.get("status") is not True:
+        raise HTTPException(
+            status_code=502,
+            detail="Payment provider returned an invalid response",
+        )
+
+    data = result.get("data")
     if (
-        result.get("status") is not True
-        or not isinstance(data, dict)
+        not isinstance(data, dict)
         or not data.get("authorization_url")
         or not data.get("reference")
     ):
@@ -332,7 +170,7 @@ async def initialize_payment(payload: InitializePaymentRequest):
         "reference": data["reference"],
         "amount": amount,
         "currency": PAYSTACK_CURRENCY,
-        "tier": tier_name,
+        "tier": DISPLAY_TIERS[tier],
     }
 
 
@@ -369,36 +207,21 @@ async def paystack_webhook(
         raise HTTPException(status_code=400, detail="Invalid event data")
 
     reference = event_data.get("reference")
-    if not isinstance(reference, str) or not reference:
+    if not isinstance(reference, str) or not reference.strip():
         raise HTTPException(status_code=400, detail="Missing transaction reference")
 
-    # Verify directly with Paystack; do not trust webhook fields alone.
-    result = await _paystack_get(
+    verified = await _paystack_get(
         f"/transaction/verify/{reference}"
     )
-    payment = result.get("data")
+    payment = verified.get("data")
 
     if not isinstance(payment, dict) or payment.get("status") != "success":
         raise HTTPException(status_code=400, detail="Payment is not successful")
 
-    metadata = payment.get("metadata") or {}
-    if not isinstance(metadata, dict):
-        raise HTTPException(status_code=400, detail="Invalid payment metadata")
-
-    task_id = metadata.get("task_id")
-    tier_value = metadata.get("tier")
-
-    if not isinstance(task_id, str) or not isinstance(tier_value, str):
-        raise HTTPException(status_code=400, detail="Missing purchase metadata")
-
-    tier_key = _normalize_tier(tier_value)
-    expected_amount = _price_for_tier(tier_key)
-    tier_name = DISPLAY_TIERS[tier_key]
-
     if payment.get("reference") != reference:
         raise HTTPException(status_code=400, detail="Reference mismatch")
 
-    if payment.get("currency", "").upper() != PAYSTACK_CURRENCY:
+    if str(payment.get("currency", "")).upper() != PAYSTACK_CURRENCY:
         raise HTTPException(status_code=400, detail="Currency mismatch")
 
     try:
@@ -406,80 +229,91 @@ async def paystack_webhook(
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid payment amount")
 
+    metadata = payment.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail="Invalid payment metadata")
+
+    task_id = metadata.get("task_id")
+    tier_value = metadata.get("tier")
+    if not isinstance(task_id, str) or not isinstance(tier_value, str):
+        raise HTTPException(status_code=400, detail="Missing purchase metadata")
+
+    tier = _normalize_tier(tier_value)
+    expected_amount = _price_for_tier(tier)
+
     if paid_amount != expected_amount:
         raise HTTPException(status_code=400, detail="Payment amount mismatch")
 
     customer = payment.get("customer") or {}
     email = customer.get("email") if isinstance(customer, dict) else None
-
-    if not isinstance(email, str) or not email:
+    if not isinstance(email, str) or not email.strip():
         raise HTTPException(status_code=400, detail="Missing customer email")
 
-    # Confirm the report still exists and remains eligible for purchase.
-    task = _get_task(task_id)
+    task = IntentRepository.get_task_by_id(task_id)
     if task is None or task.get("action") != "published":
         raise HTTPException(status_code=400, detail="Report is unavailable")
 
-    raw_signal = task.get("raw_signal")
-    if not isinstance(raw_signal, str) or not raw_signal.strip():
+    if not isinstance(task.get("raw_signal"), str) or not task["raw_signal"].strip():
         raise HTTPException(status_code=500, detail="Report content is unavailable")
 
-    _init_payment_ledger()
+    now = int(time.time())
+    tier_name = DISPLAY_TIERS[tier]
 
-    claim = _claim_fulfillment(
-        reference=reference,
-        task_id=task_id,
-        email=email,
-        tier=tier_key,
-        amount=paid_amount,
-    )
+    # Record the verified payment and queue its fulfillment atomically.
+    with db_connection() as conn:
+        conn.execute("""
+            INSERT INTO verified_payments (
+                reference, task_id, customer_email, tier, amount,
+                currency, status, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+            ON CONFLICT (reference) DO NOTHING;
+        """, (
+            reference, task_id, email, tier, paid_amount,
+            PAYSTACK_CURRENCY, now, now,
+        ))
 
-    if claim == "sent":
-        return {"status": "success", "unlocked": True, "duplicate": True}
+        existing = conn.execute("""
+            SELECT task_id, customer_email, tier, amount, currency, status
+            FROM verified_payments
+            WHERE reference = %s
+            FOR UPDATE;
+        """, (reference,)).fetchone()
 
-    if claim == "busy":
-        # Ask Paystack to retry later instead of creating a second delivery.
-        raise HTTPException(
-            status_code=503,
-            detail="Fulfillment is already being processed",
-        )
+        if existing is None:
+            raise HTTPException(status_code=500, detail="Payment ledger unavailable")
 
-    try:
-        solution_content = generate_tiered_playbook(
-            tier_name,
-            raw_signal,
-            category=task.get("task_category"),
-        )
-
-        # This function is synchronous in the existing integration.
-        sent = send_fulfillment_email(
-            email,
-            task_id,
-            tier_name,
-            solution_content,
-        )
-
-        if not sent:
-            _mark_payment(reference, "failed")
+        if (
+            existing["task_id"] != task_id
+            or existing["customer_email"].lower() != email.lower()
+            or existing["tier"] != tier
+            or int(existing["amount"]) != paid_amount
+            or existing["currency"] != PAYSTACK_CURRENCY
+        ):
             raise HTTPException(
-                status_code=503,
-                detail="Email delivery could not be queued",
+                status_code=409,
+                detail="Payment reference does not match this purchase",
             )
 
-        _mark_payment(reference, "sent")
+        if existing["status"] == "sent":
+            return {
+                "status": "success",
+                "unlocked": True,
+                "duplicate": True,
+            }
 
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Report fulfillment failed for a verified payment")
-        try:
-            _mark_payment(reference, "failed")
-        except Exception:
-            logger.exception("Could not update payment fulfillment status")
+        conn.execute("""
+            INSERT INTO fulfillment_jobs (
+                task_id, purchase_reference, recipient_email, tier,
+                status, attempts, next_attempt_at, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, 'pending', 0, NOW(), NOW(), NOW())
+            ON CONFLICT (purchase_reference) DO NOTHING;
+        """, (task_id, reference, email, tier_name))
 
-        raise HTTPException(
-            status_code=503,
-            detail="Payment verified, but report fulfillment failed",
-        )
-
-    return {"status": "success", "unlocked": True}
+    return {
+        "status": "success",
+        "verified": True,
+        "queued": True,
+        "reference": reference,
+    }
