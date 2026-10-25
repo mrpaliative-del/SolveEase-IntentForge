@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(
     title="IntentForge Enterprise Autonomous Engine",
     description="Autonomous B2B lead scrutiny, Telegram inline actions, TTL expiry, and Paystack reconciliation.",
-    version="16.1.0"
+    version="16.2.0"
 )
 
 app.add_middleware(
@@ -422,7 +422,7 @@ def serve_frontend():
                 const res = await fetch('/api/v1/harvest/live', { method: 'POST' });
                 const data = await res.json();
                 if(res.ok) {
-                    alert(`Execution Loop Completed! Ingested ${data.live_leads_harvested || 0} fresh verified leads.`);
+                    alert('Execution Loop Completed! Ingested ' + (data.live_leads_harvested || 0) + ' fresh verified leads.');
                     fetchLeads();
                 } else {
                     alert(data.detail || "Rate limit or execution error.");
@@ -437,7 +437,7 @@ def serve_frontend():
                 const data = await res.json();
                 if (data.status === 'success') {
                     allLeads = data.leads;
-                    document.getElementById('lead-count').innerText = `${allLeads.length} Leads`;
+                    document.getElementById('lead-count').innerText = allLeads.length + ' Leads';
                     container.innerHTML = allLeads.map(l => `
                         <div class="bg-cardBg border border-slate-800 hover:border-emerald-500/50 rounded-xl p-6 transition flex flex-col justify-between shadow-xl">
                             <div>
@@ -467,7 +467,7 @@ def serve_frontend():
                         </div>
                     `).join('');
                 }
-            } catch (err) { container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Sync error.</div>`; }
+            } catch (err) { container.innerHTML = '<div class="col-span-full text-center py-12 text-red-400">Sync error.</div>'; }
         }
 
         function payWithPaystack(taskHash, playbookPriceUSD, taskTitle) {
@@ -485,7 +485,7 @@ def serve_frontend():
                     custom_fields: [{ display_name: "Task", variable_name: "task", value: taskTitle }]
                 },
                 callback: function(response) {
-                    alert(`Payment Successful! Reference: ${response.reference}. Playbook dispatched.`);
+                    alert('Payment Successful! Reference: ' + response.reference + '. Playbook dispatched.');
                 },
                 onClose: function() { alert('Transaction window closed.'); }
             });
