@@ -9,7 +9,7 @@ from app.api.inbound import router as inbound_router
 app = FastAPI(
     title="IntentForge Commercial Engine",
     description="Automated multi-vertical B2B task harvesting and monetization pipeline.",
-    version="6.2.0"
+    version="6.3.0"
 )
 
 # Enable CORS for frontend and webhook integrations
@@ -60,25 +60,26 @@ async def startup_db_setup_and_purge():
     except Exception as e:
         print(f"Startup Setup Error: {e}")
 
-# Include API routers
+# Include API routers under /api/v1
 app.include_router(inbound_router, prefix="/api/v1")
-
-# Mount static folder if you have CSS/JS assets (optional, safe if folder exists)
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def serve_frontend():
     """
-    Serves index.html at the root URL if present, otherwise returns API status JSON.
+    Robustly serves index.html from any standard directory location.
     """
-    if os.path.exists("index.html"):
-        return FileResponse("index.html")
-    elif os.path.exists("public/index.html"):
-        return FileResponse("public/index.html")
-    elif os.path.exists("static/index.html"):
-        return FileResponse("static/index.html")
-        
+    possible_paths = [
+        "index.html",
+        "public/index.html",
+        "static/index.html",
+        "../index.html"
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            return FileResponse(path)
+            
+    # Fallback status if index.html is truly missing
     return {
         "status": "online",
         "service": "IntentForge Commercial Lead Engine",
