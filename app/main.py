@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(
     title="IntentForge Enterprise Autonomous Engine",
     description="Autonomous B2B lead scrutiny, Telegram inline actions, TTL expiry, and Paystack reconciliation.",
-    version="16.2.0"
+    version="16.3.0"
 )
 
 app.add_middleware(
