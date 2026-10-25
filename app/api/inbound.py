@@ -2,7 +2,8 @@ from fastapi import APIRouter
 from app.services.scanner import harvest_live_github_leads
 from app.storage.repository import IntentRepository
 
-router = APIRouter(prefix="/api/v1/inbound", tags=["inbound"])
+# Remove the redundant prefix here since main.py already prefixes with /api/v1
+router = APIRouter(tags=["inbound"])
 
 @router.post("/harvest/live")
 async def trigger_live_harvest():
@@ -10,7 +11,7 @@ async def trigger_live_harvest():
     return {
         "status": "success",
         "live_leads_harvested": count,
-        "message": "Successfully ingested real-time developer telemetry."
+        "message": "Successfully ingested real-time commercial telemetry."
     }
 
 @router.get("/live")
