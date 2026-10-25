@@ -3,9 +3,9 @@ import hashlib
 import re
 from app.storage.repository import IntentRepository
 
-async def harvest_budget_verified_tasks():
+async def harvest_live_github_leads():
     """
-    Scrapes advertised tasks, extracts explicit monetary budgets using regex,
+    Scrapes advertised commercial tasks, extracts explicit monetary budgets using regex,
     verifies commercial intent, and structures them for monetization.
     """
     task_feeds = [
@@ -23,35 +23,31 @@ async def harvest_budget_verified_tasks():
                 summary = entry.get("summary", "")
                 link = entry.get("link", "https://upwork.com")
                 
-                # Clean up HTML from summary
-                clean_summary = re.sub(<.*?>'', summary)
+                # Clean up HTML from summary properly
+                clean_summary = re.sub(r'<.*?>', '', summary)
                 full_text = f"{title} {clean_summary}"
                 
                 # --- STEP 1: EXTRACT MONETARY VALUE VIA REGEX ---
-                # Looks for patterns like $100, $500.00, USD 200, ₦50,000
                 budget_matches = re.findall(r'(\$[\d,]+(?:\.\d{2})?|\bUSD\s*[\d,]+|\bNGN\s*[\d,]+|₦[\d,]+)', full_text)
                 
                 extracted_budget = 0.0
                 if budget_matches:
-                    # Clean the first found budget string into a float
                     raw_val = budget_matches[0]
                     num_str = re.sub(r'[^\d.]', '', raw_val)
                     if num_str:
                         extracted_budget = float(num_str)
 
                 # --- STEP 2: VERIFY COMMERCIAL MONETIZATION THRESHOLD ---
-                # Only keep tasks that have an explicit advertised budget (e.g., >= $30 or ₦20,000)
                 if extracted_budget < 30.0:
-                    continue # Skip low-budget or unbudgeted noise
+                    continue  # Skip low-budget or unbudgeted noise
 
                 snippet = clean_summary[:300].replace("\n", " ") + "..."
                 task_hash = hashlib.sha256(link.encode()).hexdigest()[:16]
                 
                 # --- STEP 3: DYNAMIC PRICING FOR MONETIZATION ---
-                # Price your automated remediation patch as a fraction of their budget (e.g., 25% of their task budget)
                 playbook_price = round(extracted_budget * 0.25, 2)
                 if playbook_price < 25.0:
-                    playbook_price = 25.0 # Minimum baseline floor
+                    playbook_price = 25.0  # Minimum baseline floor
 
                 domain = "Verified High-Budget Commercial Task"
                 if "paystack" in full_text.lower() or "stripe" in full_text.lower():
@@ -76,3 +72,7 @@ async def harvest_budget_verified_tasks():
 
     print(f"Successfully harvested {harvested_count} budget-verified monetization tasks.")
     return harvested_count
+
+# Alias for backwards compatibility
+harvest_monetization_leads = harvest_live_github_leads
+harvest_advertised_tasks = harvest_live_github_leads
