@@ -3,12 +3,11 @@ import httpx
 import hashlib
 from app.storage.repository import IntentRepository
 
-async def harvest_monetization_leads():
+async def harvest_live_github_leads():
     """
-    Scrapes high-intent commercial and financial infrastructure pain points 
-    where businesses experience revenue leakage or system downtime.
+    Scrapes real-time commercial and financial infrastructure pain points 
+    where businesses experience transaction or revenue friction.
     """
-    # High-intent commercial and transactional queries
     commercial_queries = [
         "Paystack webhook verification failed python",
         "Stripe checkout session error production",
@@ -34,25 +33,23 @@ async def harvest_monetization_leads():
                     
                     for item in items:
                         title = item.get("title", "Unknown Transaction Issue")
-                        body = item.get(vector for vector in [item.get("body")]) or "Commercial transaction pipeline friction detected."
+                        body = item.get("body") or "Commercial transaction pipeline friction detected."
                         snippet = body[:300].replace("\n", " ") + "..."
                         source_url = item.get("html_url", "https://github.com")
                         
                         task_hash = hashlib.sha256(source_url.encode()).hexdigest()[:16]
                         
-                        # Classify into high-value monetization categories
                         domain = "Payment & Transaction Integrity"
                         if "database" in q or "deadlock" in q:
                             domain = "Ledger & Database Concurrency"
 
-                        # Log as a high-value commercial lead ($45 - $150 remediation value)
                         await IntentRepository.save_intent(
                             task_hash=task_hash,
                             domain=domain,
                             title=title,
                             snippet=snippet,
                             source=source_url,
-                            price=45.00  
+                            price=45.00  # High-value monetization lead price
                         )
                         harvested_count += 1
                 else:
@@ -62,3 +59,6 @@ async def harvest_monetization_leads():
 
     print(f"Successfully harvested {harvested_count} high-intent monetization leads.")
     return harvested_count
+
+# Alias for backwards compatibility
+harvest_monetization_leads = harvest_live_github_leads
