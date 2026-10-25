@@ -1,31 +1,31 @@
 def generate_remediation_markdown(title: str, domain: str, snippet: str, source: str) -> str:
-    return f"""# 🛡️ SolveEase IntentForge Remediation Patch
-**Target Issue:** {title}
-**Domain:** {domain}
-**Original Source:** {source}
-
----
-
-## 🔍 Root-Cause Analysis
-Based on telemetry captured from public developer engineering channels, this bottleneck typically stems from unhandled asynchronous execution constraints, state synchronization gaps, or strict gateway timeout profiles. 
-
-**Context / Issue Snippet:**
-> "{snippet}"
-
----
-
-## 🛠️ Step-by-Step Production Patch
-
-### 1. Architectural Guardrail Implementation
-To eliminate latency spikes and prevent request blocking under high load, isolate synchronous operations or external network calls into dedicated background threads or worker queues:
-
-```python
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-executor = ThreadPoolExecutor(max_workers=4)
-
-async def execute_isolated_task(payload: dict):
-    # Offload blocking operations safely away from the main event loop
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(executor, blocking_third_party_call, payload)
+    return (
+        f"# SolveEase IntentForge Remediation Patch\n\n"
+        f"**Target Issue:** {title}\n\n"
+        f"**Domain:** {domain}\n\n"
+        f"**Original Source:** {source}\n\n"
+        f"---\n\n"
+        f"## Root-Cause Analysis\n\n"
+        f"Based on telemetry captured from public developer engineering channels, this bottleneck typically stems from unhandled asynchronous execution constraints, state synchronization gaps, or strict gateway timeout profiles.\n\n"
+        f"**Context / Issue Snippet:**\n"
+        f"> \"{snippet}\"\n\n"
+        f"---\n\n"
+        f"## Step-by-Step Production Patch\n\n"
+        f"### 1. Architectural Guardrail Implementation\n\n"
+        f"To eliminate latency spikes and prevent request blocking under high load, isolate synchronous operations or external network calls into dedicated background threads or worker queues:\n\n"
+        f"```python\n"
+        f"import asyncio\n"
+        f"from concurrent.futures import ThreadPoolExecutor\n\n"
+        f"executor = ThreadPoolExecutor(max_workers=4)\n\n"
+        f"async def execute_isolated_task(payload: dict):\n"
+        f"    loop = asyncio.get_running_loop()\n"
+        f"    return await loop.run_in_executor(executor, blocking_third_party_call, payload)\n"
+        f"```\n\n"
+        f"### 2. Idempotency & Error Handling\n\n"
+        f"Ensure your service handles duplicate requests or webhook retries gracefully using atomic database locks or unique task hashes to avoid race conditions.\n\n"
+        f"### 3. Verification & Monitoring\n\n"
+        f"* Monitor event loop lag using standard APM telemetry.\n"
+        f"* Configure automated alerts for any HTTP 5xx or gateway timeout anomalies.\n\n"
+        f"---\n\n"
+        f"*Generated autonomously by SolveEase IntentForge v3.0.*\n"
+    )
