@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SolveEase IntentForge — Live Technical Remediation Index</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://js.paystack.co/v1/inline.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <span class="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></span>
+                <h1 class="text-xl font-bold tracking-tight text-white">SolveEase <span class="text-emerald-400">IntentForge</span></h1>
+            </div>
+            <div class="text-xs font-mono text-slate-400 bg-slate-800 px-3 py-1.5 rounded-md border border-slate-700">
+                Live Feed: <span id="lead-count" class="text-emerald-400 font-bold">Scanning...</span> Leads Captured
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="max-w-4xl mx-auto px-4 py-12 text-center">
+        <span class="bg-emerald-500/10 text-emerald-400 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-500/20 uppercase tracking-wider">
+            Autonomous Technical Signal Feed
+        </span>
+        <h2 class="text-3xl sm:text-5xl font-extrabold mt-4 mb-3 tracking-tight text-white">
+            Instant Remediation Playbooks for Production Failures
+        </h2>
+        <p class="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto">
+            Real-time telemetry capturing developer bottlenecks, gateway errors, and infrastructure deadlocks. Get step-by-step markdown remediation patches delivered instantly.
+        </p>
+    </section>
+
+    <!-- Main Grid Container -->
+    <main class="max-w-6xl mx-auto px-4 pb-20">
+        <div id="leads-grid" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Skeleton Loader -->
+            <div class="p-6 bg-slate-900 border border-slate-800 rounded-xl animate-pulse h-48"></div>
+            <div class="p-6 bg-slate-900 border border-slate-800 rounded-xl animate-pulse h-48"></div>
+        </div>
+    </main>
+
+    <!-- Payment Modal Wrapper -->
+    <script>
+        const API_ENDPOINT = '/api/v1/inbound/live';
+        // Replace with your public Paystack Key
+        const PAYSTACK_PUBLIC_KEY = 'pk_live_xxxxxxxxxxxxxxxxxxxxxxxx'; 
+
+        async function fetchLiveLeads() {
+            try {
+                const response = await fetch(API_ENDPOINT);
+                const result = await response.json();
+
+                if (result.status === 'success' && result.data) {
+                    document.getElementById('lead-count').innerText = result.count;
+                    renderLeads(result.data);
+                }
+            } catch (err) {
+                console.error('Failed to load live leads:', err);
+            }
+        }
+
+        function renderLeads(leads) {
+            const container = document.getElementById('leads-grid');
+            container.innerHTML = '';
+
+            leads.forEach(lead => {
+                const card = document.createElement('div');
+                card.className = 'flex flex-col justify-between p-6 bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-xl transition duration-200 shadow-lg';
+
+                card.innerHTML = `
+                    <div>
+                        <div class="flex justify-between items-start mb-3">
+                            <span class="text-xs font-medium px-2.5 py-1 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                ${escapeHtml(lead.domain)}
+                            </span>
+                            <span class="text-xs font-mono text-slate-500">
+                                ${lead.created_at.split(' ')[1] || ''} UTC
+                            </span>
+                        </div>
+                        <h3 class="text-lg font-semibold text-slate-100 mb-2 leading-snug">
+                            ${escapeHtml(lead.title)}
+                        </h3>
+                        <p class="text-slate-400 text-xs sm:text-sm line-clamp-3 mb-4 leading-relaxed">
+                            ${escapeHtml(lead.snippet.replace(/<[^>]*>?/gm, ''))}
+                        </p>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-800/80 flex items-center justify-between mt-2">
+                        <div>
+                            <span class="text-xs text-slate-500 block">Remediation Patch</span>
+                            <span class="text-xl font-extrabold text-emerald-400">$${lead.price}.00</span>
+                        </div>
+                        <button onclick="triggerCheckout('${lead.task_hash}', ${lead.price}, '${escapeHtml(lead.title)}')" 
+                                class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-lg transition duration-150 shadow-md">
+                            Unlock Playbook →
+                        </button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function triggerCheckout(taskHash, price, title) {
+            const email = prompt("Enter your email address to receive the playbook:");
+            if (!email || !email.includes('@')) {
+                alert("A valid email address is required for instant fulfillment.");
+                return;
+            }
+
+            const handler = PaystackPop.setup({
+                key: PAYSTACK_PUBLIC_KEY,
+                email: email,
+                amount: price * 100 * 1600, // Converted to NGN kobo (or native USD depending on Paystack currency setup)
+                currency: 'NGN',
+                metadata: {
+                    custom_fields: [
+                        { display_name: "Task Hash", variable_name: "task_hash", value: taskHash },
+                        { display_name: "Issue Title", variable_name: "issue_title", value: title }
+                    ]
+                },
+                callback: function(response) {
+                    alert("Payment received! Verification reference: " + response.reference + ". Your playbook is firing to your inbox.");
+                },
+                onClose: function() {
+                    console.log('Payment popup closed.');
+                }
+            });
+            handler.openIframe();
+        }
+
+        function escapeHtml(str) {
+            return str ? str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") : '';
+        }
+
+        // Fetch on load & refresh every 60 seconds
+        fetchLiveLeads();
+        setInterval(fetchLiveLeads, 60000);
+    </script>
+</body>
+</html>
