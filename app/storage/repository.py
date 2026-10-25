@@ -18,3 +18,32 @@ class IntentRepository:
             return rows if isinstance(rows, list) else []
         except Exception:
             return []
+
+
+class TransactionRepository:
+
+    @staticmethod
+    async def log_transaction(reference: str, task_hash: str, email: str, amount: float, status: str):
+        # Ensure transactions table exists
+        await db_execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reference TEXT UNIQUE NOT NULL,
+                task_hash TEXT NOT NULL,
+                email TEXT NOT NULL,
+                amount REAL NOT NULL,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        query = """
+            INSERT OR REPLACE INTO transactions (reference, task_hash, email, amount, status)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        return await db_execute(query, (reference, task_hash, email, amount, status))
+
+    @staticmethod
+    async def get_transaction(reference: str):
+        query = "SELECT * FROM transactions WHERE reference = ?"
+        rows = await db_execute(query, (reference,))
+        return rows[0] if rows else None
