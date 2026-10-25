@@ -1,0 +1,30 @@
+import os
+import httpx
+
+async def send_playbook_email(to_email: str, title: str, markdown_content: str):
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        print("RESEND_API_KEY not configured. Skipping email dispatch.")
+        return False
+
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {resend_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "from": "IntentForge Playbooks <playbooks@solveease.com>",
+        "to": [to_email],
+        "subject": f"Your Remediation Patch: {title}",
+        "text": f"Thank you for your purchase!\n\nHere is your requested remediation playbook:\n\n{markdown_content}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code in [200, 201]:
+            print(f"Playbook successfully dispatched to {to_email}")
+            return True
+        else:
+            print(f"Failed to send email: {response.text}")
+            return False
