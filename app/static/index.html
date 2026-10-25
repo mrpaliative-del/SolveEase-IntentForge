@@ -1,166 +1,179 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SolveEase IntentForge — Live Technical Remediation Index</title>
+    <title>IntentForge | Commercial Lead & Remediation Engine</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://js.paystack.co/v1/inline.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darker: '#090d16',
+                        cardBg: '#111827',
+                        accentGreen: '#10b981',
+                    }
+                }
+            }
+        }
+    </script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+<body class="bg-[#090d16] text-slate-100 font-sans min-h-screen antialiased selection:bg-emerald-500 selection:text-black">
 
-    <!-- Header -->
-    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
-        <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+    <!-- Top Navigation Bar -->
+    <header class="border-b border-slate-800 bg-[#090d16]/80 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3">
-                <span class="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></span>
-                <h1 class="text-xl font-bold tracking-tight text-white">SolveEase <span class="text-emerald-400">IntentForge</span></h1>
+                <div class="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                <span class="text-xl font-bold tracking-wider bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">INTENTFORGE</span>
+                <span class="text-xs uppercase tracking-widest px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded">Live Commercial Engine</span>
             </div>
-            <div class="text-xs font-mono text-slate-400 bg-slate-800 px-3 py-1.5 rounded-md border border-slate-700">
-                Live Feed: <span id="lead-count" class="text-emerald-400 font-bold">Scanning...</span> Leads Captured
+            <div class="flex items-center space-x-4">
+                <a href="/docs" target="_blank" class="text-sm text-slate-400 hover:text-white transition">API Docs</a>
+                <button onclick="fetchLeads()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded text-sm transition shadow-lg shadow-emerald-900/40">
+                    Sync Live Leads
+                </button>
             </div>
         </div>
     </header>
 
-    <!-- Hero Section -->
-    <section class="max-w-4xl mx-auto px-4 py-12 text-center">
-        <span class="bg-emerald-500/10 text-emerald-400 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-500/20 uppercase tracking-wider">
-            Autonomous Technical Signal Feed
-        </span>
-        <h2 class="text-3xl sm:text-5xl font-extrabold mt-4 mb-3 tracking-tight text-white">
-            Instant Remediation Playbooks for Production Failures
-        </h2>
-        <p class="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto">
-            Real-time telemetry capturing developer bottlenecks, gateway errors, and infrastructure deadlocks. Get step-by-step markdown remediation patches delivered instantly.
-        </p>
-    </section>
-
-    <!-- Main Grid Container -->
-    <main class="max-w-6xl mx-auto px-4 pb-20">
-        <div id="leads-grid" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="col-span-full p-8 bg-slate-900 border border-slate-800 rounded-xl text-center text-slate-400">
-                Fetching live technical leads...
+    <!-- Main Dashboard Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Metrics / Status Banner -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div class="text-slate-400 text-sm font-medium">Active Verticals</div>
+                <div class="text-2xl font-bold text-white mt-1">4 Commercial Pillars</div>
+                <div class="text-xs text-emerald-400 mt-2">Enrichment • SEO • Video • Payments</div>
+            </div>
+            <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div class="text-slate-400 text-sm font-medium">Engine Status</div>
+                <div class="text-2xl font-bold text-emerald-400 mt-1 flex items-center">
+                    <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 mr-2"></span> Operational
+                </div>
+                <div class="text-xs text-slate-400 mt-2">Zero-Noise SQLite DB Active</div>
+            </div>
+            <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div class="text-slate-400 text-sm font-medium">Harvested Leads</div>
+                <div id="lead-count" class="text-2xl font-bold text-cyan-400 mt-1">Loading...</div>
+                <div class="text-xs text-slate-400 mt-2">Strict Budget Floor &gt;= $35</div>
             </div>
         </div>
+
+        <!-- Section Header -->
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Live Client Adverts & Task Feed</h1>
+                <p class="text-sm text-slate-400">Real-time commercial intent harvested directly from live marketplace feeds.</p>
+            </div>
+            <!-- Filter Pills -->
+            <div class="flex flex-wrap gap-2">
+                <button onclick="filterLeads('all')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">All Leads</button>
+                <button onclick="filterLeads('Enrichment')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">Lead Enrichment</button>
+                <button onclick="filterLeads('SEO')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">Programmatic SEO</button>
+                <button onclick="filterLeads('Payment')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">Payments & Backend</button>
+            </div>
+        </div>
+
+        <!-- Leads Grid Container -->
+        <div id="leads-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Dynamic Cards Injected Here -->
+            <div class="col-span-full text-center py-12 text-slate-500">
+                Connecting to live backend endpoint (`/api/v1/inbound/live`)...
+            </div>
+        </div>
+
     </main>
 
-    <script>
-        const PAYSTACK_PUBLIC_KEY = 'pk_live_xxxxxxxxxxxxxxxxxxxxxxxx';
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 mt-16 py-8 text-center text-xs text-slate-500">
+        IntentForge Autonomous Commercial Engine &bull; Zero Developer Noise &bull; Exact Budget Extraction
+    </footer>
 
-        async function fetchLiveLeads() {
-            const countEl = document.getElementById('lead-count');
-            const gridEl = document.getElementById('leads-grid');
+    <!-- Frontend Script -->
+    <script>
+        let allLeads = [];
+
+        async function fetchLeads() {
+            const container = document.getElementById('leads-container');
+            container.innerHTML = `<div class="col-span-full text-center py-12 text-slate-400 animate-pulse">Syncing fresh commercial leads...</div>`;
 
             try {
                 const response = await fetch('/api/v1/inbound/live');
-                if (!response.ok) throw new Error('HTTP status ' + response.status);
-                
-                const result = await response.json();
+                const data = await response.json();
 
-                if (result.status === 'success' && Array.isArray(result.data) && result.data.length > 0) {
-                    countEl.innerText = result.data.length;
-                    renderLeads(result.data);
+                if (data.status === 'success' && data.leads) {
+                    allLeads = data.leads;
+                    document.getElementById('lead-count').innerText = `${allLeads.length} Verified Leads`;
+                    renderLeads(allLeads);
                 } else {
-                    countEl.innerText = "0";
-                    gridEl.innerHTML = `
-                        <div class="col-span-full p-8 bg-slate-900 border border-slate-800 rounded-xl text-center">
-                            <p class="text-slate-300 font-medium mb-1">Autonomous Scanner Active</p>
-                            <p class="text-slate-500 text-xs">Sweeping feeds for live bottlenecks. New leads will appear shortly.</p>
-                        </div>`;
+                    container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Failed to load leads from endpoint.</div>`;
                 }
-            } catch (err) {
-                console.error('Fetch error:', err);
-                countEl.innerText = "Error";
-                gridEl.innerHTML = `
-                    <div class="col-span-full p-8 bg-red-950/40 border border-red-800 rounded-xl text-center text-red-300 text-sm">
-                        Unable to connect to live lead stream. Check browser console for details.
-                    </div>`;
+            } catch (error) {
+                console.error("Error fetching leads:", error);
+                container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Network error connecting to backend API.</div>`;
             }
         }
 
         function renderLeads(leads) {
-            const container = document.getElementById('leads-grid');
-            container.innerHTML = '';
-
-            leads.forEach(lead => {
-                const card = document.createElement('div');
-                card.className = 'flex flex-col justify-between p-6 bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-xl transition duration-200 shadow-lg';
-
-                const cleanSnippet = (lead.snippet || '').replace(/<[^>]*>?/gm, '');
-
-                card.innerHTML = `
-                    <div>
-                        <div class="flex justify-between items-start mb-3">
-                            <span class="text-xs font-medium px-2.5 py-1 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                                ${escapeHtml(lead.domain || 'Backend Engineering')}
-                            </span>
-                            <span class="text-xs font-mono text-slate-500">
-                                ${lead.created_at ? lead.created_at.split(' ')[1] || '' : ''} UTC
-                            </span>
-                        </div>
-                        <h3 class="text-lg font-semibold text-slate-100 mb-2 leading-snug">
-                            ${escapeHtml(lead.title)}
-                        </h3>
-                        <p class="text-slate-400 text-xs sm:text-sm line-clamp-3 mb-4 leading-relaxed">
-                            ${escapeHtml(cleanSnippet)}
-                        </p>
-                    </div>
-
-                    <div class="pt-4 border-t border-slate-800/80 flex items-center justify-between mt-2">
-                        <div>
-                            <span class="text-xs text-slate-500 block">Remediation Patch</span>
-                            <span class="text-xl font-extrabold text-emerald-400">$${lead.price || 5}.00</span>
-                        </div>
-                        <button onclick="triggerCheckout('${lead.task_hash}', ${lead.price || 5}, '${escapeHtml(lead.title)}')" 
-                                class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-lg transition duration-150 shadow-md">
-                            Unlock Playbook →
-                        </button>
-                    </div>
-                `;
-                container.appendChild(card);
-            });
-        }
-
-        function triggerCheckout(taskHash, price, title) {
-            const email = prompt("Enter your email address to receive the playbook:");
-            if (!email || !email.includes('@')) {
-                alert("A valid email address is required for instant fulfillment.");
+            const container = document.getElementById('leads-container');
+            if (leads.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-16 bg-cardBg border border-slate-800 rounded-xl">
+                        <div class="text-slate-400 text-lg">No active commercial leads matching criteria right now.</div>
+                        <p class="text-sm text-slate-500 mt-2">The background scanner is continuously polling live feeds.</p>
+                    </div>`;
                 return;
             }
 
-            const handler = PaystackPop.setup({
-                key: PAYSTACK_PUBLIC_KEY,
-                email: email,
-                amount: price * 100 * 1600,
-                currency: 'NGN',
-                metadata: {
-                    custom_fields: [
-                        { display_name: "Task Hash", variable_name: "task_hash", value: taskHash },
-                        { display_name: "Issue Title", variable_name: "issue_title", value: title }
-                    ]
-                },
-                callback: function(response) {
-                    alert("Payment received! Reference: " + response.reference + ". Your playbook is dispatching to your inbox.");
-                },
-                onClose: function() {
-                    console.log('Payment popup closed.');
-                }
-            });
-            handler.openIframe();
+            container.innerHTML = leads.map(lead => {
+                const playbookPrice = Math.max(lead.price * 0.25, 35).toFixed(2);
+                return `
+                    <div class="bg-cardBg border border-slate-800 hover:border-emerald-500/50 rounded-xl p-6 transition flex flex-col justify-between shadow-xl relative overflow-hidden group">
+                        <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition"></div>
+                        <div>
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold rounded">${lead.domain}</span>
+                                <span class="text-xs text-slate-500">${lead.created_at}</span>
+                            </div>
+                            <h2 class="text-lg font-bold text-white mb-2 line-clamp-2">${lead.title}</h2>
+                            <p class="text-slate-400 text-sm mb-4 line-clamp-3 leading-relaxed">${lead.snippet}</p>
+                        </div>
+                        <div>
+                            <div class="flex items-center justify-between bg-slate-900/80 border border-slate-800/80 rounded-lg p-3 mb-4">
+                                <div>
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Client Budget</div>
+                                    <div class="text-emerald-400 font-bold text-base">$${lead.price.toLocaleString()}</div>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Playbook Price (25%)</div>
+                                    <div class="text-cyan-400 font-bold text-base">$${playbookPrice}</div>
+                                </div>
+                            </div>
+                            <a href="${lead.source}" target="_blank" class="w-full block text-center py-2.5 bg-slate-800 hover:bg-emerald-600 hover:text-black text-slate-200 font-semibold rounded-lg text-sm transition">
+                                View Live Advert &rarr;
+                            </a>
+                        </div>
+                    </div>
+                `;
+            }).join('');
         }
 
-        function escapeHtml(str) {
-            return str ? str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") : '';
+        function filterLeads(category) {
+            if (category === 'all') {
+                renderLeads(allLeads);
+            } else {
+                const filtered = allLeads.filter(l => l.domain.toLowerCase().includes(category.toLowerCase()));
+                renderLeads(filtered);
+            }
         }
 
-        // Trigger load when DOM is fully ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', fetchLiveLeads);
-        } else {
-            fetchLiveLeads();
-        }
-
-        setInterval(fetchLiveLeads, 30000);
+        // Fetch on load
+        fetchLeads();
     </script>
 </body>
 </html>
