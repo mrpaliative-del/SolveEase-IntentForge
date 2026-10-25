@@ -6,7 +6,7 @@ from app.api.inbound import router as inbound_router
 app = FastAPI(
     title="IntentForge Commercial Engine",
     description="Automated multi-vertical B2B task harvesting and monetization pipeline.",
-    version="6.0.0"
+    version="6.1.0"
 )
 
 # Enable CORS for frontend and webhook integrations
@@ -19,17 +19,29 @@ app.add_middleware(
 )
 
 @app.on_event("startup")
-async def startup_db_cleanup():
+async def startup_db_setup_and_purge():
     """
-    Automatically purges legacy dev articles, GitHub pull requests, 
-    and low-budget noise from the SQLite database on startup.
+    Ensures the intents table exists, then immediately purges 
+    legacy developer tutorials, GitHub PRs, and low-budget noise on startup.
     """
     try:
-        # Connect to your SQLite database (adjust filename if your repo uses another path)
         conn = sqlite3.connect("intents.db")
         cursor = conn.cursor()
         
-        # Delete legacy mock/tutorial/GitHub PR noise and low-value items
+        # 1. Ensure the table exists so queries never throw 'no such table'
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS intents (
+                task_hash TEXT PRIMARY KEY,
+                domain TEXT,
+                title TEXT,
+                snippet TEXT,
+                source TEXT,
+                price REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # 2. Wipe out any existing legacy noise or low-value items
         cursor.execute("""
             DELETE FROM intents 
             WHERE source LIKE '%dev.to%' 
@@ -41,11 +53,11 @@ async def startup_db_cleanup():
         deleted_rows = cursor.rowcount
         conn.commit()
         conn.close()
-        print(f"Startup Purge: Successfully wiped {deleted_rows} legacy noise entries from database.")
+        print(f"Database Initialized & Purged: Successfully wiped {deleted_rows} legacy noise entries.")
     except Exception as e:
-        print(f"Startup Purge Note (Table might not exist yet): {e}")
+        print(f"Startup Setup Error: {e}")
 
-# Include your inbound API and scanner routers
+# Include your inbound API routers
 app.include_router(inbound_router, prefix="/api/v1")
 
 @app.get("/")
