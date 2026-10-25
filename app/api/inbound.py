@@ -2,8 +2,7 @@ from fastapi import APIRouter
 from app.services.scanner import harvest_live_github_leads
 from app.storage.repository import IntentRepository
 
-# Remove the redundant prefix here since main.py already prefixes with /api/v1
-router = APIRouter(tags=["inbound"])
+router = APIRouter(prefix="/inbound", tags=["inbound"])
 
 @router.post("/harvest/live")
 async def trigger_live_harvest():
