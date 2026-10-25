@@ -1,102 +1,40 @@
-
-import html
-import logging
-
 import httpx
+from app.config import config
 
-from app.config import settings
-
-logger = logging.getLogger(__name__)
-
-RESEND_API_URL = "https://api.resend.com/emails"
-RESEND_TIMEOUT = 20.0
-
-
-def send_fulfillment_email(
-    to_email: str,
-    task_id: str,
-    tier: str,
-    solution_content: str,
-) -> bool:
+async def send_playbook_email(to_email: str, playbook_title: str, playbook_content: str):
+    if not config.RESEND_API_KEY:
+        return False, "RESEND_API_KEY not configured"
+        
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {config.RESEND_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 8px;">
+        <h2 style="color: #1a1a1a;">🛠️ SolveEase Technical Playbook</h2>
+        <p style="color: #4a4a4a;">Thank you for your purchase. Below is your instant technical remediation brief:</p>
+        <h3 style="color: #0056b3;">{playbook_title}</h3>
+        <hr style="border: none; border-top: 1px solid #eee;" />
+        <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; white-space: pre-wrap; font-family: monospace; font-size: 13px; color: #333;">{playbook_content}</pre>
+        <hr style="border: none; border-top: 1px solid #eee;" />
+        <p style="font-size: 12px; color: #888;">Fulfilled automatically by SolveEase IntentForge Engine v3.0.</p>
+    </div>
     """
-    Submit a purchased report to Resend.
-
-    Returns True only when Resend accepts the request and returns
-    an email ID. Acceptance does not guarantee inbox delivery.
-    """
-    api_key = getattr(settings, "RESEND_API_KEY", None)
-    from_email = getattr(settings, "RESEND_FROM_EMAIL", None)
-
-    if isinstance(api_key, bytes):
-        api_key = api_key.decode("utf-8")
-
-    if not api_key or not from_email:
-        logger.error("Email fulfillment is not configured")
-        return False
-
-    safe_task_id = html.escape(str(task_id))
-    safe_tier = html.escape(str(tier))
-    safe_content = html.escape(str(solution_content))
-
-    # Preserve line breaks while escaping all untrusted report content.
-    safe_content = safe_content.replace("\n", "<br>\n")
-
+    
     payload = {
-        "from": from_email,
+        "from": config.RESEND_FROM_EMAIL,
         "to": [to_email],
-        "subject": f"SolveEase report: {tier} — {task_id}",
-        "text": (
-            f"SolveEase {tier}\n"
-            f"Report ID: {task_id}\n\n"
-            f"{solution_content}\n\n"
-            "This report provides diagnostic guidance and does not "
-            "guarantee that a technical issue has been resolved."
-        ),
-        "html": (
-            "<div style='font-family:Arial,sans-serif;"
-            "max-width:700px;margin:auto;line-height:1.6'>"
-            "<h2>SolveEase IntentForge</h2>"
-            f"<p><strong>Report:</strong> {safe_task_id}</p>"
-            f"<p><strong>Type:</strong> {safe_tier}</p>"
-            "<hr>"
-            f"<div>{safe_content}</div>"
-            "<hr>"
-            "<p><small>This report provides diagnostic guidance. "
-            "It does not guarantee that a technical issue has "
-            "been resolved.</small></p>"
-            "</div>"
-        ),
+        "subject": f"[SolveEase Playbook] {playbook_title}",
+        "html": html_body
     }
 
     try:
-        response = httpx.post(
-            RESEND_API_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=RESEND_TIMEOUT,
-        )
-
-        if response.status_code not in (200, 201):
-            logger.error(
-                "Resend rejected a fulfillment request; HTTP %s",
-                response.status_code,
-            )
-            return False
-
-        result = response.json()
-        if not isinstance(result, dict) or not result.get("id"):
-            logger.error("Resend returned no email ID")
-            return False
-
-        logger.info(
-            "Resend accepted fulfillment for report %s",
-            task_id,
-        )
-        return True
-
-    except (httpx.HTTPError, ValueError):
-        logger.exception("Email fulfillment request failed")
-        return False
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code in (200, 201):
+                return True, "Email delivered"
+            return False, response.text
+    except Exception as e:
+        return False, str(e)
