@@ -7,7 +7,7 @@ from app.api.inbound import router as inbound_router
 app = FastAPI(
     title="IntentForge Commercial Engine",
     description="Automated multi-vertical B2B task harvesting and monetization pipeline.",
-    version="6.4.0"
+    version="6.5.0"
 )
 
 # Enable CORS for frontend and webhook integrations
@@ -64,7 +64,7 @@ app.include_router(inbound_router, prefix="/api/v1")
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
     """
-    Serves the IntentForge Live Dashboard UI directly.
+    Serves the IntentForge Live Dashboard UI with built-in harvest controls.
     """
     return """
 <!DOCTYPE html>
@@ -99,10 +99,12 @@ def serve_frontend():
                 <span class="text-xl font-bold tracking-wider bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">INTENTFORGE</span>
                 <span class="text-xs uppercase tracking-widest px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded">Live Commercial Engine</span>
             </div>
-            <div class="flex items-center space-x-4">
-                <a href="/docs" target="_blank" class="text-sm text-slate-400 hover:text-white transition">API Docs</a>
+            <div class="flex items-center space-x-3">
+                <button onclick="triggerHarvest()" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold rounded text-sm transition shadow-lg shadow-cyan-900/40">
+                    ⚡ Trigger Harvest
+                </button>
                 <button onclick="fetchLeads()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded text-sm transition shadow-lg shadow-emerald-900/40">
-                    Sync Live Leads
+                    🔄 Sync Leads
                 </button>
             </div>
         </div>
@@ -150,7 +152,7 @@ def serve_frontend():
         <!-- Leads Grid Container -->
         <div id="leads-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="col-span-full text-center py-12 text-slate-500 animate-pulse">
-                Connecting to live backend endpoint (`/api/v1/inbound/live`)...
+                Connecting to live backend endpoint (`/api/v1/live`)...
             </div>
         </div>
 
@@ -165,12 +167,29 @@ def serve_frontend():
     <script>
         let allLeads = [];
 
+        async function triggerHarvest() {
+            const btn = event.target;
+            const originalText = btn.innerText;
+            btn.innerText = "Harvesting...";
+            try {
+                const response = await fetch('/api/v1/harvest/live', { method: 'POST' });
+                const data = await response.json();
+                alert(`Harvest Complete! Ingested ${data.live_leads_harvested || 0} new leads.`);
+                fetchLeads();
+            } catch (error) {
+                console.error("Harvest error:", error);
+                alert("Failed to trigger live harvest.");
+            } finally {
+                btn.innerText = originalText;
+            }
+        }
+
         async function fetchLeads() {
             const container = document.getElementById('leads-container');
             container.innerHTML = `<div class="col-span-full text-center py-12 text-slate-400 animate-pulse">Syncing fresh commercial leads...</div>`;
 
             try {
-                const response = await fetch('/api/v1/inbound/live');
+                const response = await fetch('/api/v1/live');
                 const data = await response.json();
 
                 if (data.status === 'success' && data.leads) {
@@ -192,20 +211,20 @@ def serve_frontend():
                 container.innerHTML = `
                     <div class="col-span-full text-center py-16 bg-cardBg border border-slate-800 rounded-xl">
                         <div class="text-slate-400 text-lg">No active commercial leads matching criteria right now.</div>
-                        <p class="text-sm text-slate-500 mt-2">The background scanner is continuously polling live feeds.</p>
+                        <p class="text-sm text-slate-500 mt-2">Click '⚡ Trigger Harvest' above to pull fresh commercial leads!</p>
                     </div>`;
                 return;
             }
 
             container.innerHTML = leads.map(lead => {
-                const playbookPrice = Math.max(lead.price * 0.25, 35).toFixed(2);
+                const playbookPrice = Math.max((lead.price || 50) * 0.25, 35).toFixed(2);
                 return `
                     <div class="bg-cardBg border border-slate-800 hover:border-emerald-500/50 rounded-xl p-6 transition flex flex-col justify-between shadow-xl relative overflow-hidden group">
                         <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition"></div>
                         <div>
                             <div class="flex items-center justify-between mb-3">
-                                <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold rounded">${lead.domain}</span>
-                                <span class="text-xs text-slate-500">${lead.created_at}</span>
+                                <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold rounded">${lead.domain || 'Commercial'}</span>
+                                <span class="text-xs text-slate-500">${lead.created_at || ''}</span>
                             </div>
                             <h2 class="text-lg font-bold text-white mb-2 line-clamp-2">${lead.title}</h2>
                             <p class="text-slate-400 text-sm mb-4 line-clamp-3 leading-relaxed">${lead.snippet}</p>
@@ -214,7 +233,7 @@ def serve_frontend():
                             <div class="flex items-center justify-between bg-slate-900/80 border border-slate-800/80 rounded-lg p-3 mb-4">
                                 <div>
                                     <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Client Budget</div>
-                                    <div class="text-emerald-400 font-bold text-base">$${lead.price.toLocaleString()}</div>
+                                    <div class="text-emerald-400 font-bold text-base">$${(lead.price || 0).toLocaleString()}</div>
                                 </div>
                                 <div class="text-right">
                                     <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Playbook Price (25%)</div>
@@ -234,7 +253,7 @@ def serve_frontend():
             if (category === 'all') {
                 renderLeads(allLeads);
             } else {
-                const filtered = allLeads.filter(l => l.domain.toLowerCase().includes(category.toLowerCase()));
+                const filtered = allLeads.filter(l => (l.domain || '').toLowerCase().includes(category.toLowerCase()));
                 renderLeads(filtered);
             }
         }
