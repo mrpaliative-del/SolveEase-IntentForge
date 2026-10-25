@@ -1,5 +1,9 @@
-
-PAYSTACK_CURRENCY=NGN
-INTENTFORGE_BRIEF_AMOUNT=100
-INTENTFORGE_PLAYBOOK_AMOUNT=300
-RESEND_FROM_EMAIL=SolveEase Reports <reports@your-verified-domain.com>
+# Local Template / Render Environment Reference
+PORT=8000
+DATABASE_PATH=/var/data/million_intent_firehose.db
+PAYSTACK_SECRET_KEY=sk_live_placeholder
+RESEND_API_KEY=re_placeholder
+RESEND_FROM_EMAIL=onboarding@resend.dev
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
+SWEEP_INTERVAL_SECONDS=1800
