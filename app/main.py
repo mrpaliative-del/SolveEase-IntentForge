@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.inbound import router as inbound_router
@@ -11,6 +12,15 @@ from app.discovery.worker import start_intent_daemon
 from app.storage.database import init_db
 
 app = FastAPI(title="SolveEase IntentForge", version="3.0")
+
+# Enable CORS for browser JS requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(health_router)
 app.include_router(inbound_router)
@@ -29,8 +39,5 @@ async def serve_landing_page():
 
 @app.on_event("startup")
 async def startup_event():
-    # 1. Initialize SQLite Database & Table Schema
     await asyncio.to_thread(init_db)
-    
-    # 2. Trigger scraper daemon
     asyncio.create_task(start_intent_daemon())
