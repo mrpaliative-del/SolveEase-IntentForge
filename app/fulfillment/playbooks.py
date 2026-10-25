@@ -1,26 +1,28 @@
 def generate_dynamic_playbook(title: str, domain: str, snippet: str) -> str:
-    return f"""
-# SolveEase Technical Remediation Playbook (v3.0 Live Edition)
-Target Domain: {domain.upper()}
-Issue Focus: {title}
-
----
-
-## 1. Comprehensive Telemetry Diagnosis
-System background workers captured the following raw production signal:
-"{snippet[:400]}..."
-
----
-
-## 2. Root Cause Analysis
-The underlying failure pattern involves unexpected concurrency deadlocks, asynchronous worker interruption, or reverse proxy timeout limits. When high-frequency write operations collide on persistent SQLite WAL instances, unhandled exceptions cause process termination.
-
----
-
-## 3. Step-by-Step Implementation Patch
-
-### Step A: Concurrency Pool & WAL Tuning
-Configure SQLite connection parameters with robust timeout buffers and WAL journal modes:
-```python
-conn.execute("PRAGMA journal_mode=WAL;")
-conn.execute("PRAGMA busy_timeout=15000;")
+    return (
+        f"# SolveEase Technical Remediation Playbook (v3.0 Live Edition)\n"
+        f"Target Domain: {domain.upper()}\n"
+        f"Issue Focus: {title}\n\n"
+        f"---\n\n"
+        f"## 1. Comprehensive Telemetry Diagnosis\n"
+        f"System background workers captured the following raw production signal:\n"
+        f"\"{snippet[:400]}...\"\n\n"
+        f"---\n\n"
+        f"## 2. Root Cause Analysis\n"
+        f"The underlying failure pattern involves unexpected concurrency deadlocks, asynchronous worker "
+        f"interruption, or reverse proxy timeout limits. When high-frequency write operations collide on "
+        f"persistent SQLite WAL instances, unhandled exceptions cause process termination.\n\n"
+        f"---\n\n"
+        f"## 3. Step-by-Step Implementation Patch\n\n"
+        f"### Step A: Concurrency Pool & WAL Tuning\n"
+        f"Configure SQLite connection parameters with robust timeout buffers and WAL journal modes:\n"
+        f"```python\n"
+        f"conn.execute('PRAGMA journal_mode=WAL;')\n"
+        f"conn.execute('PRAGMA busy_timeout=15000;')\n"
+        f"```\n\n"
+        f"### Step B: Asynchronous Exception Isolation\n"
+        f"Implement exponential backoff and jittered retry routines around network requests and webhook handlers.\n\n"
+        f"### Step C: Deployment & Verification\n"
+        f"Deploy the patch to your cluster, verify HTTP status responses (200 OK), and monitor real-time "
+        f"telemetry through your Telegram dashboard.\n"
+    )
