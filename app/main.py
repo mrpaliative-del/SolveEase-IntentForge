@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(
     title="IntentForge Enterprise Autonomous Engine",
     description="Autonomous B2B lead scrutiny, Telegram inline actions, TTL expiry, and Paystack reconciliation.",
-    version="16.3.0"
+    version="16.4.0"
 )
 
 app.add_middleware(
@@ -347,7 +347,7 @@ async def paystack_webhook(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    html_template = """
+    html_template = r"""
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
