@@ -1,0 +1,14 @@
+name: IntentForge Autonomous Execution Cron
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Runs every 30 minutes
+  workflow_dispatch:        # Allows manual trigger from GitHub mobile app
+
+jobs:
+  execute-harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Live Scrutiny & Harvest Endpoint
+        run: |
+          curl -X POST https://solveease-intentforge.onrender.com/api/v1/harvest/live
