@@ -1,56 +1,47 @@
 import httpx
+import feedparser
 import hashlib
 import re
-import feedparser
 from app.storage.repository import IntentRepository
 
 async def harvest_multivertical_leads():
     """
-    Scrapes live commercial task marketplaces in real-time across your 4 business directions,
-    extracting exact high-value client budgets, verbatim task narrations, and filtering out noise.
+    Production-grade scanner for IntentForge.
+    Scrapes active commercial job/task streams across the 4 business verticals,
+    enforces strict budgeting, and completely blocks developer tutorials/PRs.
     """
     
-    # Real-time search endpoints targeting high-intent commercial tasks
-    live_endpoints = [
-        {
-            "url": "https://www.upwork.com/ab/feed/jobs/rss?q=clay%20OR%20gohighlevel%20OR%20crm%20automation&sort=rec",
-            "vertical": "Local Business Lead Enrichment"
-        },
-        {
-            "url": "https://www.upwork.com/ab/feed/jobs/rss?q=programmatic%20seo%20OR%20shopify%20automation%20OR%20wordpress%20scaling&sort=rec",
-            "vertical": "Programmatic SEO & Content"
-        },
-        {
-            "url": "https://www.upwork.com/ab/feed/jobs/rss?q=podcast%20repurposing%20OR%20youtube%20transcript%20pipeline&sort=rec",
-            "vertical": "Video-to-Text & Social Snippets"
-        },
-        {
-            "url": "https://www.upwork.com/ab/feed/jobs/rss?q=paystack%20integration%20OR%20stripe%20webhook%20error&sort=rec",
-            "vertical": "Payment & Backend Infrastructure"
-        }
+    # Target feeds across your 4 commercial monetization directions
+    target_feeds = [
+        "https://www.upwork.com/ab/feed/jobs/rss?q=clay%20OR%20gohighlevel%20OR%20crm%20automation&sort=rec",
+        "https://www.upwork.com/ab/feed/jobs/rss?q=shopify%20blog%20OR%20programmatic%20seo%20OR%20wordpress%20automation&sort=rec",
+        "https://www.upwork.com/ab/feed/jobs/rss?q=youtube%20transcript%20OR%20whisper%20OR%20podcast%20repurposing&sort=rec",
+        "https://www.upwork.com/ab/feed/jobs/rss?q=paystack%20integration%20OR%20stripe%20webhook%20error&sort=rec"
     ]
     
-    # Negative filters to eliminate tutorials, blogs, and code repositories
-    noise_filters = [
-        "tutorial", "how to", "guide", "walkthrough", "github.com", "dev.to", 
-        "medium.com", "substack", "clone", "boilerplate", "template", "open source"
+    # Hard blacklist to eliminate developer blogs, tutorials, and Git commits
+    blocked_domains = [
+        "dev.to", "medium.com", "github.com", "hashnode.dev", 
+        "substack.com", "gitlab.com", "stackoverflow.com"
+    ]
+    
+    blocked_terms = [
+        "tutorial", "how to", "guide", "walkthrough", "clone", 
+        "boilerplate", "template", "open source", "pull request", "merged"
     ]
     
     harvested_count = 0
-    headers = {"User-Agent": "IntentForge-Live-Engine/5.0"}
+    headers = {"User-Agent": "IntentForge-StrictCommercialEngine/6.0"}
 
     async with httpx.AsyncClient(timeout=20.0, headers=headers) as client:
-        for ep in live_endpoints:
-            feed_url = ep["url"]
-            vertical_name = ep["vertical"]
-
+        for feed_url in target_feeds:
             try:
                 response = await client.get(feed_url)
                 if response.status_code != 200:
                     continue
 
                 feed = feedparser.parse(response.text)
-                for entry in feed.entries[:6]:
+                for entry in feed.entries[:8]:
                     title = entry.get("title", "").strip()
                     summary = entry.get("summary", "").strip()
                     link = entry.get("link", "").strip()
@@ -58,16 +49,19 @@ async def harvest_multivertical_leads():
                     if not link:
                         continue
 
-                    # Clean HTML tags to get the verbatim task narration written by the client
+                    # 1. STRICT BLOCK: Drop any developer or tutorial site instantly
+                    if any(domain in link.lower() for domain in blocked_domains):
+                        continue
+
+                    # Clean HTML tags to get verbatim client text
                     verbatim_narration = re.sub(r'<.*?>', '', summary).strip()
                     full_text = f"{title} {verbatim_narration}".lower()
-                    
-                    # Drop any developer tutorials or noise
-                    if any(noise in full_text or noise in link.lower() for noise in noise_filters):
+
+                    # 2. STRICT BLOCK: Drop tutorial/code language
+                    if any(term in full_text for term in blocked_terms):
                         continue
 
                     # --- EXACT BUDGET EXTRACTION VIA REGEX ---
-                    # Captures real advertised figures (e.g., $250, $1,500, USD 500, ₦200,000)
                     budget_matches = re.findall(r'(\$[\d,]+(?:\.\d{2})?|\bUSD\s*[\d,]+|\bNGN\s*[\d,]+|₦[\d,]+)', full_text)
                     
                     exact_budget = 0.0
@@ -77,33 +71,44 @@ async def harvest_multivertical_leads():
                         if num_str:
                             exact_budget = float(num_str)
 
-                    # High-Value Monetization Floor: Only keep real gigs with budgets >= $50
-                    if exact_budget < 50.0:
+                    # 3. COMMERCIAL FILTER: Require real advertised budget >= $40
+                    if exact_budget < 40.0:
                         continue
 
                     task_hash = hashlib.sha256(link.encode()).hexdigest()[:16]
                     
-                    # Automated Solution Pricing (25% of the client's advertised budget)
+                    # Playbook pricing (25% of exact budget)
                     playbook_price = round(exact_budget * 0.25, 2)
-                    if playbook_price < 35.0:
-                        playbook_price = 35.0
+                    if playbook_price < 30.0:
+                        playbook_price = 30.0
 
-                    # Save real live lead with verbatim narration and exact budget into SQLite
+                    # Assign vertical category based on keywords
+                    domain = "High-Value Commercial Task"
+                    if "clay" in full_text or "gohighlevel" in full_text or "crm" in full_text:
+                        domain = "Local Business Lead Enrichment"
+                    elif "seo" in full_text or "shopify" in full_text or "wordpress" in full_text:
+                        domain = "Programmatic SEO & Content"
+                    elif "transcript" in full_text or "whisper" in full_text or "podcast" in full_text:
+                        domain = "Video-to-Text Social Snippets"
+                    elif "paystack" in full_text or "stripe" in full_text or "webhook" in full_text:
+                        domain = "Payment & Backend Infrastructure"
+
+                    # Save verified commercial lead into SQLite
                     await IntentRepository.save_intent(
                         task_hash=task_hash,
-                        domain=vertical_name,
+                        domain=domain,
                         title=title,
                         snippet=verbatim_narration[:500] + "...",
                         source=link,
                         price=exact_budget
                     )
                     harvested_count += 1
-                    print(f"[LIVE MONETIZATION LEAD] [{vertical_name}] Budget: ${exact_budget} | Title: {title}")
+                    print(f"[VERIFIED COMMERCIAL LEAD] [{domain}] Budget: ${exact_budget} | Title: {title}")
 
             except Exception as e:
-                print(f"Error fetching live marketplace feed {feed_url}: {e}")
+                print(f"Error parsing feed {feed_url}: {e}")
 
-    print(f"Successfully synchronized {harvested_count} real-time high-value commercial leads.")
+    print(f"Successfully synchronized {harvested_count} verified commercial leads.")
     return harvested_count
 
 # Aliases for router compatibility
