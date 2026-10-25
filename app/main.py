@@ -1,13 +1,16 @@
-import os
 import sqlite3
-from pathlib import Path
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.inbound import router as inbound_router
 
-app = FastAPI(title="IntentForge Commercial Engine")
+app = FastAPI(
+    title="IntentForge Commercial Engine",
+    description="Automated multi-vertical B2B task harvesting and monetization pipeline.",
+    version="6.4.0"
+)
 
+# Enable CORS for frontend and webhook integrations
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,14 +19,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Base directory setup
-BASE_DIR = Path(__file__).resolve().parent.parent
-
 @app.on_event("startup")
 async def startup_db_setup_and_purge():
+    """
+    Ensures the intents table exists, then immediately purges 
+    legacy developer tutorials, GitHub PRs, and low-budget noise on startup.
+    """
     try:
         conn = sqlite3.connect("intents.db")
         cursor = conn.cursor()
+        
+        # Ensure table exists
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS intents (
                 task_hash TEXT PRIMARY KEY,
@@ -35,6 +41,8 @@ async def startup_db_setup_and_purge():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        
+        # Wipe legacy noise
         cursor.execute("""
             DELETE FROM intents 
             WHERE source LIKE '%dev.to%' 
@@ -42,30 +50,197 @@ async def startup_db_setup_and_purge():
                OR source LIKE '%medium.com%'
                OR price < 35;
         """)
+        
+        deleted_rows = cursor.rowcount
         conn.commit()
         conn.close()
+        print(f"Database Initialized & Purged: Successfully wiped {deleted_rows} legacy noise entries.")
     except Exception as e:
-        print(f"Startup DB setup note: {e}")
+        print(f"Startup Setup Error: {e}")
 
-# Mount API router
+# Include API routers
 app.include_router(inbound_router, prefix="/api/v1")
 
-@app.get("/")
-def serve_index():
-    # Check absolute path first
-    index_path = BASE_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
-    
-    # Check relative working directory
-    if os.path.exists("index.html"):
-        return FileResponse("index.html")
-
-    return {
-        "status": "online",
-        "service": "IntentForge Commercial Lead Engine",
-        "endpoints": {
-            "live_leads": "/api/v1/inbound/live",
-            "docs": "/docs"
+@app.get("/", response_class=HTMLResponse)
+def serve_frontend():
+    """
+    Serves the IntentForge Live Dashboard UI directly.
+    """
+    return """
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IntentForge | Commercial Lead & Remediation Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darker: '#090d16',
+                        cardBg: '#111827',
+                        accentGreen: '#10b981',
+                    }
+                }
+            }
         }
-    }
+    </script>
+</head>
+<body class="bg-[#090d16] text-slate-100 font-sans min-h-screen antialiased selection:bg-emerald-500 selection:text-black">
+
+    <!-- Top Navigation Bar -->
+    <header class="border-b border-slate-800 bg-[#090d16]/80 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                <span class="text-xl font-bold tracking-wider bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">INTENTFORGE</span>
+                <span class="text-xs uppercase tracking-widest px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded">Live Commercial Engine</span>
+            </div>
+            <div class="flex items-center space-x-4">
+                <a href="/docs" target="_blank" class="text-sm text-slate-400 hover:text-white transition">API Docs</a>
+                <button onclick="fetchLeads()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded text-sm transition shadow-lg shadow-emerald-900/40">
+                    Sync Live Leads
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Metrics / Status Banner -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div class="text-slate-400 text-sm font-medium">Active Verticals</div>
+                <div class="text-2xl font-bold text-white mt-1">4 Commercial Pillars</div>
+                <div class="text-xs text-emerald-400 mt-2">Enrichment • SEO • Video • Payments</div>
+            </div>
+            <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div class="text-slate-400 text-sm font-medium">Engine Status</div>
+                <div class="text-2xl font-bold text-emerald-400 mt-1 flex items-center">
+                    <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 mr-2"></span> Operational
+                </div>
+                <div class="text-xs text-slate-400 mt-2">Zero-Noise SQLite DB Active</div>
+            </div>
+            <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
+                <div class="text-slate-400 text-sm font-medium">Harvested Leads</div>
+                <div id="lead-count" class="text-2xl font-bold text-cyan-400 mt-1">Loading...</div>
+                <div class="text-xs text-slate-400 mt-2">Strict Budget Floor &gt;= $35</div>
+            </div>
+        </div>
+
+        <!-- Section Header -->
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Live Client Adverts & Task Feed</h1>
+                <p class="text-sm text-slate-400">Real-time commercial intent harvested directly from live marketplace feeds.</p>
+            </div>
+            <!-- Filter Pills -->
+            <div class="flex flex-wrap gap-2">
+                <button onclick="filterLeads('all')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">All Leads</button>
+                <button onclick="filterLeads('Enrichment')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">Lead Enrichment</button>
+                <button onclick="filterLeads('SEO')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">Programmatic SEO</button>
+                <button onclick="filterLeads('Payment')" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 transition">Payments & Backend</button>
+            </div>
+        </div>
+
+        <!-- Leads Grid Container -->
+        <div id="leads-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="col-span-full text-center py-12 text-slate-500 animate-pulse">
+                Connecting to live backend endpoint (`/api/v1/inbound/live`)...
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 mt-16 py-8 text-center text-xs text-slate-500">
+        IntentForge Autonomous Commercial Engine &bull; Zero Developer Noise &bull; Exact Budget Extraction
+    </footer>
+
+    <!-- Frontend Script -->
+    <script>
+        let allLeads = [];
+
+        async function fetchLeads() {
+            const container = document.getElementById('leads-container');
+            container.innerHTML = `<div class="col-span-full text-center py-12 text-slate-400 animate-pulse">Syncing fresh commercial leads...</div>`;
+
+            try {
+                const response = await fetch('/api/v1/inbound/live');
+                const data = await response.json();
+
+                if (data.status === 'success' && data.leads) {
+                    allLeads = data.leads;
+                    document.getElementById('lead-count').innerText = `${allLeads.length} Verified Leads`;
+                    renderLeads(allLeads);
+                } else {
+                    container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Failed to load leads from endpoint.</div>`;
+                }
+            } catch (error) {
+                console.error("Error fetching leads:", error);
+                container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Network error connecting to backend API.</div>`;
+            }
+        }
+
+        function renderLeads(leads) {
+            const container = document.getElementById('leads-container');
+            if (leads.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-16 bg-cardBg border border-slate-800 rounded-xl">
+                        <div class="text-slate-400 text-lg">No active commercial leads matching criteria right now.</div>
+                        <p class="text-sm text-slate-500 mt-2">The background scanner is continuously polling live feeds.</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = leads.map(lead => {
+                const playbookPrice = Math.max(lead.price * 0.25, 35).toFixed(2);
+                return `
+                    <div class="bg-cardBg border border-slate-800 hover:border-emerald-500/50 rounded-xl p-6 transition flex flex-col justify-between shadow-xl relative overflow-hidden group">
+                        <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition"></div>
+                        <div>
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold rounded">${lead.domain}</span>
+                                <span class="text-xs text-slate-500">${lead.created_at}</span>
+                            </div>
+                            <h2 class="text-lg font-bold text-white mb-2 line-clamp-2">${lead.title}</h2>
+                            <p class="text-slate-400 text-sm mb-4 line-clamp-3 leading-relaxed">${lead.snippet}</p>
+                        </div>
+                        <div>
+                            <div class="flex items-center justify-between bg-slate-900/80 border border-slate-800/80 rounded-lg p-3 mb-4">
+                                <div>
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Client Budget</div>
+                                    <div class="text-emerald-400 font-bold text-base">$${lead.price.toLocaleString()}</div>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Playbook Price (25%)</div>
+                                    <div class="text-cyan-400 font-bold text-base">$${playbookPrice}</div>
+                                </div>
+                            </div>
+                            <a href="${lead.source}" target="_blank" class="w-full block text-center py-2.5 bg-slate-800 hover:bg-emerald-600 hover:text-black text-slate-200 font-semibold rounded-lg text-sm transition">
+                                View Live Advert &rarr;
+                            </a>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function filterLeads(category) {
+            if (category === 'all') {
+                renderLeads(allLeads);
+            } else {
+                const filtered = allLeads.filter(l => l.domain.toLowerCase().includes(category.toLowerCase()));
+                renderLeads(filtered);
+            }
+        }
+
+        fetchLeads();
+    </script>
+</body>
+</html>
+    """
