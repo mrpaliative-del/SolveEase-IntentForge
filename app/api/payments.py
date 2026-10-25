@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException
-from app.storage.repository import TransactionRepository
+from app.storage.repository import TransactionRepository, LedgerRepository
 from app.services.playbook import generate_remediation_markdown
 from app.services.mailer import send_playbook_email
 import os
@@ -30,10 +30,13 @@ async def paystack_webhook(request: Request):
         data = event.get("data", {})
         reference = data.get("reference")
         email = data.get("customer", {}).get("email")
-        amount = data.get("amount", 0) / 100  # Convert from kobo
-        metadata = data.get("metadata", {})
+        gross_amount = data.get("amount", 0) / 100  # Convert from kobo to NGN/USD
         
-        # Extract custom fields from Paystack metadata
+        # Calculate standard gateway fee (e.g., 1.5% for Paystack local transactions)
+        paystack_fee = (gross_amount * 0.015)
+        net_balance = gross_amount - paystack_fee
+
+        metadata = data.get("metadata", {})
         custom_fields = metadata.get("custom_fields", [])
         task_hash = ""
         issue_title = "Production Remediation Patch"
@@ -44,16 +47,25 @@ async def paystack_webhook(request: Request):
             if field.get("variable_name") == "issue_title":
                 issue_title = field.get("value")
 
-        # 1. Log transaction in database
+        # 1. Log raw transaction
         await TransactionRepository.log_transaction(
             reference=reference,
             task_hash=task_hash,
             email=email,
-            amount=amount,
+            amount=gross_amount,
             status="SUCCESS"
         )
 
-        # 2. Generate markdown playbook content
+        # 2. Log entry into internal holding ledger
+        await LedgerRepository.log_ledger_entry(
+            reference=reference,
+            email=email,
+            gross_amount=gross_amount,
+            fee=round(paystack_fee, 2),
+            net_balance=round(net_balance, 2)
+        )
+
+        # 3. Generate markdown playbook content & dispatch email
         playbook_text = generate_remediation_markdown(
             title=issue_title,
             domain="Backend Concurrency & Reliability",
@@ -61,7 +73,6 @@ async def paystack_webhook(request: Request):
             source="https://solveease-intentforge.onrender.com"
         )
 
-        # 3. Dispatch via Resend
         await send_playbook_email(
             to_email=email,
             title=issue_title,
@@ -69,3 +80,13 @@ async def paystack_webhook(request: Request):
         )
 
     return {"status": "received"}
+
+@router.get("/ledger/summary")
+async def get_ledger_summary():
+    summary = await LedgerRepository.get_ledger_summary()
+    entries = await LedgerRepository.get_all_ledger_entries()
+    return {
+        "status": "success",
+        "summary": summary,
+        "transactions": entries
+    }
