@@ -1,12 +1,15 @@
 import sqlite3
+import os
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.inbound import router as inbound_router
 
 app = FastAPI(
     title="IntentForge Commercial Engine",
     description="Automated multi-vertical B2B task harvesting and monetization pipeline.",
-    version="6.1.0"
+    version="6.2.0"
 )
 
 # Enable CORS for frontend and webhook integrations
@@ -28,7 +31,7 @@ async def startup_db_setup_and_purge():
         conn = sqlite3.connect("intents.db")
         cursor = conn.cursor()
         
-        # 1. Ensure the table exists so queries never throw 'no such table'
+        # Ensure table exists
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS intents (
                 task_hash TEXT PRIMARY KEY,
@@ -41,7 +44,7 @@ async def startup_db_setup_and_purge():
             );
         """)
         
-        # 2. Wipe out any existing legacy noise or low-value items
+        # Wipe legacy noise
         cursor.execute("""
             DELETE FROM intents 
             WHERE source LIKE '%dev.to%' 
@@ -57,11 +60,25 @@ async def startup_db_setup_and_purge():
     except Exception as e:
         print(f"Startup Setup Error: {e}")
 
-# Include your inbound API routers
+# Include API routers
 app.include_router(inbound_router, prefix="/api/v1")
 
+# Mount static folder if you have CSS/JS assets (optional, safe if folder exists)
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
 @app.get("/")
-def read_root():
+def serve_frontend():
+    """
+    Serves index.html at the root URL if present, otherwise returns API status JSON.
+    """
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    elif os.path.exists("public/index.html"):
+        return FileResponse("public/index.html")
+    elif os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
+        
     return {
         "status": "online",
         "service": "IntentForge Commercial Lead Engine",
