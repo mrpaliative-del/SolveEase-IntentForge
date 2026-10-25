@@ -5,16 +5,16 @@ import os
 import hmac
 import hashlib as crypto_hash
 import httpx
+import time
 from datetime import datetime, timedelta
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 app = FastAPI(
-    title="IntentForge Autonomous Monetization Engine",
-    description="Automated 4-pillar lead scrutiny, Telegram alerts, Paystack checkout, and Resend fulfillment.",
-    version="14.0.0"
+    title="IntentForge Enterprise Autonomous Engine",
+    description="Autonomous B2B lead scrutiny, Telegram inline actions, TTL expiry, and Paystack reconciliation.",
+    version="15.0.0"
 )
 
 app.add_middleware(
@@ -25,11 +25,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Environment Keys (Set these in your Render Dashboard Environment Variables)
+# Environment Keys
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "sk_test_placeholder")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+
+# Simple In-Memory Rate Limiter Dictionary
+REQUEST_LOGS = {}
+
+def check_rate_limit(client_ip: str, limit: int = 10, window: int = 60) -> bool:
+    """Simple sliding-window rate limiter to protect endpoints."""
+    now = time.time()
+    if client_ip not in REQUEST_LOGS:
+        REQUEST_LOGS[client_ip] = []
+    
+    # Filter timestamps within window
+    REQUEST_LOGS[client_ip] = [t for t in REQUEST_LOGS[client_ip] if now - t < window]
+    if len(REQUEST_LOGS[client_ip]) >= limit:
+        return False
+    
+    REQUEST_LOGS[client_ip].append(now)
+    return True
 
 def get_db():
     conn = sqlite3.connect("intents.db")
@@ -41,7 +58,6 @@ async def startup_db_setup_and_purge():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        # Intents table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS intents (
                 task_hash TEXT PRIMARY KEY,
@@ -56,7 +72,6 @@ async def startup_db_setup_and_purge():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # Orders / Transactions table for Paystack webhook reconciliation
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 reference TEXT PRIMARY KEY,
@@ -67,12 +82,14 @@ async def startup_db_setup_and_purge():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # TTL EXPRIY: Purge leads older than 48 hours or noise
         cursor.execute("""
             DELETE FROM intents 
             WHERE source LIKE '%dev.to%' 
                OR source LIKE '%github.com%/pull/%'
                OR source LIKE '%medium.com%'
-               OR price < 3.0;
+               OR price < 3.0
+               OR datetime(created_at) < datetime('now', '-2 days');
         """)
         conn.commit()
         conn.close()
@@ -80,37 +97,57 @@ async def startup_db_setup_and_purge():
         print(f"Startup Setup Error: {e}")
 
 async def dispatch_telegram_alert(title: str, domain: str, price: float, playbook_price: float, score: int, source: str):
+    """
+    Sends a high-priority telemetry alert to Telegram with Inline Action Buttons.
+    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
+
     message = (
-        f"🔥 **INTENTFORGE: HIGH-INTENT SIGNAL**\n\n"
-        f"📂 **Pillar:** {domain}\n"
-        f"🎯 **Task:** {title}\n"
-        f"💰 **Client Budget:** ${price:,.2f}\n"
-        f"💎 **Playbook Price (25%):** ${playbook_price:.2f} (Score: {score}/100)\n\n"
-        f"🔗 [View Task Advert]({source})"
+        f"🔥 *INTENTFORGE: HIGH-INTENT SIGNAL*\n\n"
+        f"📂 *Pillar:* {domain}\n"
+        f"🎯 *Task:* {title}\n"
+        f"💰 *Client Budget:* ${price:,.2f}\n"
+        f"💎 *Playbook Price (25%):* ${playbook_price:.2f} (Score: {score}/100)"
     )
+    
+    # Telegram Inline Keyboard Markup
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🔗 View Live Task Advert", "url": source},
+                {"text": f"💳 Unlock Playbook (${playbook_price:.2f})", "url": "https://solveease-intentforge.onrender.com"}
+            ]
+        ]
+    }
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown", "disable_web_page_preview": True}
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload, timeout=5.0)
-    except Exception as e:
-        print(f"Telegram dispatch error: {e}")
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup
+    }
+    
+    # Retry fallback loop (3 attempts)
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=5.0)
+                if response.status_code == 200:
+                    break
+        except Exception as e:
+            print(f"Telegram dispatch attempt {attempt + 1} failed: {e}")
+            await asyncio.sleep(1)
 
 async def fulfill_playbook_via_resend(email: str, title: str, source: str):
-    """
-    Fulfills the purchased playbook/code architecture via Resend API instantly.
-    """
     if not RESEND_API_KEY:
-        print(f"Resend API key missing. Simulated email sent to {email} for playbook: {title}")
+        print(f"Resend API key missing. Simulated email sent to {email}")
         return
 
     url = "https://api.resend.com/emails"
-    headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "from": "IntentForge <playbooks@solveease.com>",
         "to": [email],
@@ -118,26 +155,23 @@ async def fulfill_playbook_via_resend(email: str, title: str, source: str):
         "html": f"""
             <div style="font-family: Arial, sans-serif; background-color: #090d16; color: #f8fafc; padding: 24px; border-radius: 8px;">
                 <h2 style="color: #10b981;">IntentForge Verified Playbook Delivery</h2>
-                <p>Thank you for your purchase. Your remediation playbook and architecture blueprint for the following client task are unlocked:</p>
+                <p>Your remediation playbook and architecture blueprint have been successfully unlocked:</p>
                 <div style="background: #111827; padding: 16px; border: 1px solid #1e293b; border-radius: 6px; margin: 16px 0;">
                     <h3 style="color: #38bdf8; margin-top: 0;">{title}</h3>
                     <p style="color: #94a3b8; font-size: 14px;">Original Advert Source: <a href="{source}" target="_blank" style="color: #38bdf8;">View Live Link</a></p>
                 </div>
-                <p><strong>Included in this Blueprint:</strong></p>
-                <ul>
-                  <li>Complete Python / FastAPI / Playwright Execution Script</li>
-                  <li>Database WAL & Webhook Reconciliation Logic</li>
-                  <li>Automated Telegram Monitoring Daemon Setup</li>
-                </ul>
-                <p style="color: #64748b; font-size: 12px; margin-top: 24px;">IntentForge Autonomous Commercial Engine &bull; Zero-Noise Telemetry</p>
+                <p><strong>Included Architecture:</strong> Python / FastAPI scraping pipeline, SQLite WAL persistence, and automated Telegram daemons.</p>
             </div>
         """
     }
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload, headers=headers, timeout=10.0)
-    except Exception as e:
-        print(f"Resend fulfillment error: {e}")
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.post(url, json=payload, headers=headers, timeout=10.0)
+                if res.status_code == 200:
+                    break
+        except Exception as e:
+            print(f"Resend attempt {attempt + 1} failed: {e}")
 
 class LeadScrutinizer:
     VALID_PILLARS = [
@@ -179,7 +213,11 @@ class LeadScrutinizer:
         return True, min(score, 99)
 
 @app.post("/api/v1/harvest/live")
-async def trigger_live_harvest(background_tasks: BackgroundTasks):
+async def trigger_live_harvest(request: Request, background_tasks: BackgroundTasks):
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip, limit=5, window=60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait before triggering another harvest.")
+
     raw_telemetry_leads = [
         {
             "domain": "Lead Enrichment",
@@ -232,7 +270,7 @@ async def trigger_live_harvest(background_tasks: BackgroundTasks):
 
             playbook_price = round(max(price * 0.25, 3.0), 2)
             task_hash = f"auto_lead_{hashlib.sha256(title.encode()).hexdigest()[:12]}"
-            created_time = (datetime.now() - timedelta(minutes=random.randint(2, 60))).strftime('%Y-%m-%d %H:%M:%S')
+            created_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             cursor.execute("""
                 INSERT OR IGNORE INTO intents 
@@ -258,10 +296,13 @@ async def get_live_intents():
     try:
         conn = get_db()
         cursor = conn.cursor()
+        # Exclude leads older than 48 hours dynamically on query
         cursor.execute("""
             SELECT task_hash, domain, title, snippet, source, price, playbook_price, scrutiny_score, verification_status, created_at 
             FROM intents 
-            WHERE verification_status = 'VERIFIED_AUTHENTIC' AND price >= 3.0
+            WHERE verification_status = 'VERIFIED_AUTHENTIC' 
+              AND price >= 3.0 
+              AND datetime(created_at) >= datetime('now', '-2 days')
             ORDER BY created_at DESC 
             LIMIT 50;
         """)
@@ -271,39 +312,32 @@ async def get_live_intents():
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
-# --- PAYSTACK WEBHOOK LISTENER ---
 @app.post("/api/v1/payments/webhook")
 async def paystack_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
     signature = request.headers.get("x-paystack-signature", "")
 
-    # Verify Paystack signature if secret key is configured
     if PAYSTACK_SECRET_KEY != "sk_test_placeholder":
         computed_sig = hmac.new(PAYSTACK_SECRET_KEY.encode('utf-8'), body, crypto_hash.sha512).hexdigest()
         if not hmac.compare_digest(computed_sig, signature):
-            raise HTTPException(status_code=400, detail="Invalid authorization signature")
+            raise HTTPException(status_code=400, detail="Invalid signature")
 
     event_data = await request.json()
-    event = event_data.get("event", "")
-
-    if event == "charge.success":
+    if event_data.get("event") == "charge.success":
         data = event_data.get("data", {})
         reference = data.get("reference")
         email = data.get("customer", {}).get("email")
-        amount = data.get("amount", 0) / 100.0  # Convert kobo/cents to major currency unit
+        amount = data.get("amount", 0) / 100.0
         metadata = data.get("metadata", {})
         task_hash = metadata.get("task_hash", "")
 
         conn = get_db()
         cursor = conn.cursor()
-        
-        # Log or update order
         cursor.execute("""
             INSERT OR REPLACE INTO orders (reference, task_hash, email, amount, status)
             VALUES (?, ?, ?, ?, 'success')
         """, (reference, task_hash, email, amount))
         
-        # Fetch task details for fulfillment
         cursor.execute("SELECT title, source FROM intents WHERE task_hash = ?", (task_hash,))
         task = cursor.fetchone()
         conn.commit()
@@ -314,7 +348,6 @@ async def paystack_webhook(request: Request, background_tasks: BackgroundTasks):
 
     return {"status": "success"}
 
-# --- Dashboard UI with Paystack Inline Checkout ---
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
     return """
@@ -323,9 +356,8 @@ def serve_frontend():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IntentForge | Autonomous Monetization Engine</title>
+    <title>IntentForge | Enterprise Autonomous Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Paystack Inline Checkout SDK -->
     <script src="https://js.paystack.co/v1/inline.js"></script>
     <script>
         tailwind.config = {
@@ -344,7 +376,7 @@ def serve_frontend():
             <div class="flex items-center space-x-3">
                 <div class="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></div>
                 <span class="text-xl font-bold tracking-wider bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">INTENTFORGE</span>
-                <span class="text-xs uppercase tracking-widest px-2.5 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded font-semibold">Autonomous Monetization</span>
+                <span class="text-xs uppercase tracking-widest px-2.5 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded font-semibold">Enterprise TTL Active</span>
             </div>
             <div class="flex items-center space-x-3">
                 <button onclick="triggerHarvest()" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold rounded text-sm transition shadow-lg shadow-cyan-900/40">
@@ -360,14 +392,14 @@ def serve_frontend():
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
-                <div class="text-slate-400 text-sm font-medium">Monetization Gate</div>
-                <div class="text-2xl font-bold text-emerald-400 mt-1">Paystack Checkout Active</div>
-                <div class="text-xs text-slate-400 mt-2">Instant Resend Email Fulfillment</div>
+                <div class="text-slate-400 text-sm font-medium">TTL Expiry & Rate Limit</div>
+                <div class="text-2xl font-bold text-emerald-400 mt-1">48-Hr Freshness Active</div>
+                <div class="text-xs text-slate-400 mt-2">Protected Telemetry Feed</div>
             </div>
             <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
-                <div class="text-slate-400 text-sm font-medium">Execution Mode</div>
-                <div class="text-2xl font-bold text-cyan-400 mt-1">Fully Headless</div>
-                <div class="text-xs text-slate-400 mt-2">GitHub Actions + Telegram Monitoring</div>
+                <div class="text-slate-400 text-sm font-medium">Telegram Telemetry</div>
+                <div class="text-2xl font-bold text-cyan-400 mt-1">Inline Action Buttons</div>
+                <div class="text-xs text-slate-400 mt-2">Direct Execution from Chat</div>
             </div>
             <div class="bg-cardBg border border-slate-800 rounded-xl p-5 shadow-xl">
                 <div class="text-slate-400 text-sm font-medium">Verified Telemetry</div>
@@ -377,11 +409,11 @@ def serve_frontend():
         </div>
 
         <div class="flex justify-between items-center mb-6">
-            <h1 class="text-2xl font-bold text-white">Monetized Execution Feed</h1>
+            <h1 class="text-2xl font-bold text-white">Enterprise Autonomous Feed</h1>
         </div>
 
         <div id="leads-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="col-span-full text-center py-12 text-slate-500 animate-pulse">Connecting to execution pipeline...</div>
+            <div class="col-span-full text-center py-12 text-slate-500 animate-pulse">Connecting to enterprise pipeline...</div>
         </div>
     </main>
 
@@ -392,8 +424,12 @@ def serve_frontend():
             try {
                 const res = await fetch('/api/v1/harvest/live', { method: 'POST' });
                 const data = await res.json();
-                alert(`Execution Loop Completed! Ingested ${data.live_leads_harvested || 0} verified leads.`);
-                fetchLeads();
+                if(res.ok) {
+                    alert(`Execution Loop Completed! Ingested ${data.live_leads_harvested || 0} fresh verified leads.`);
+                    fetchLeads();
+                } else {
+                    alert(data.detail || "Rate limit or execution error.");
+                }
             } catch (err) { alert("Execution failed."); }
         }
 
@@ -438,31 +474,23 @@ def serve_frontend():
         }
 
         function payWithPaystack(taskHash, playbookPriceUSD, taskTitle) {
-            // Convert USD playbook price to Kobo/Cents (approx conversion or assume USD gateway / NG equivalent)
-            // For Paystack USD support or standard test keys: amount is in cents/kobo (multiply by 100)
             const amountInCents = Math.round(playbookPriceUSD * 100);
             const customerEmail = prompt("Enter your email address to receive the solution playbook instantly:", "founder@solveease.com");
-            
-            if (!customerEmail || !customerEmail.includes("@")) {
-                alert("Valid email required for instant playbook delivery.");
-                return;
-            }
+            if (!customerEmail || !customerEmail.includes("@")) return;
 
             let handler = PaystackPop.setup({
-                key: 'pk_test_placeholder', // Replace with your live/test Paystack Public Key
+                key: 'pk_test_placeholder',
                 email: customerEmail,
                 amount: amountInCents,
-                currency: "USD", // Or "NGN" depending on your Paystack account currency
+                currency: "USD",
                 metadata: {
                     task_hash: taskHash,
                     custom_fields: [{ display_name: "Task", variable_name: "task", value: taskTitle }]
                 },
                 callback: function(response) {
-                    alert(`Payment Successful! Reference: ${response.reference}. Your solution playbook has been dispatched to ${customerEmail}.`);
+                    alert(`Payment Successful! Reference: ${response.reference}. Playbook dispatched.`);
                 },
-                onClose: function() {
-                    alert('Transaction window closed.');
-                }
+                onClose: function() { alert('Transaction window closed.'); }
             });
             handler.openIframe();
         }
