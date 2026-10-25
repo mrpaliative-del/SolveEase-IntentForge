@@ -1,64 +1,78 @@
-import os
-import httpx
+import feedparser
 import hashlib
+import re
 from app.storage.repository import IntentRepository
 
-async def harvest_live_github_leads():
+async def harvest_budget_verified_tasks():
     """
-    Scrapes real-time commercial and financial infrastructure pain points 
-    where businesses experience transaction or revenue friction.
+    Scrapes advertised tasks, extracts explicit monetary budgets using regex,
+    verifies commercial intent, and structures them for monetization.
     """
-    commercial_queries = [
-        "Paystack webhook verification failed python",
-        "Stripe checkout session error production",
-        "FastAPI payment processing race condition",
-        "database deadlock financial transaction error"
+    task_feeds = [
+        "https://www.upwork.com/ab/feed/jobs/rss?q=paystack%20OR%20stripe%20OR%20fastapi&sort=rec",
+        "https://www.upwork.com/ab/feed/jobs/rss?q=database%20bug%20OR%20backend%20urgent&sort=rec"
     ]
-    
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "IntentForge-Monetization-Engine/3.0"
-    }
     
     harvested_count = 0
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for q in commercial_queries:
-            url = f"https://api.github.com/search/issues?q={q}&sort=created&order=desc&per_page=2"
-            try:
-                response = await client.get(url, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    items = data.get("items", [])
-                    
-                    for item in items:
-                        title = item.get("title", "Unknown Transaction Issue")
-                        body = item.get("body") or "Commercial transaction pipeline friction detected."
-                        snippet = body[:300].replace("\n", " ") + "..."
-                        source_url = item.get("html_url", "https://github.com")
-                        
-                        task_hash = hashlib.sha256(source_url.encode()).hexdigest()[:16]
-                        
-                        domain = "Payment & Transaction Integrity"
-                        if "database" in q or "deadlock" in q:
-                            domain = "Ledger & Database Concurrency"
+    for feed_url in task_feeds:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:5]:
+                title = entry.get("title", "")
+                summary = entry.get("summary", "")
+                link = entry.get("link", "https://upwork.com")
+                
+                # Clean up HTML from summary
+                clean_summary = re.sub(<.*?>'', summary)
+                full_text = f"{title} {clean_summary}"
+                
+                # --- STEP 1: EXTRACT MONETARY VALUE VIA REGEX ---
+                # Looks for patterns like $100, $500.00, USD 200, ₦50,000
+                budget_matches = re.findall(r'(\$[\d,]+(?:\.\d{2})?|\bUSD\s*[\d,]+|\bNGN\s*[\d,]+|₦[\d,]+)', full_text)
+                
+                extracted_budget = 0.0
+                if budget_matches:
+                    # Clean the first found budget string into a float
+                    raw_val = budget_matches[0]
+                    num_str = re.sub(r'[^\d.]', '', raw_val)
+                    if num_str:
+                        extracted_budget = float(num_str)
 
-                        await IntentRepository.save_intent(
-                            task_hash=task_hash,
-                            domain=domain,
-                            title=title,
-                            snippet=snippet,
-                            source=source_url,
-                            price=45.00  # High-value monetization lead price
-                        )
-                        harvested_count += 1
-                else:
-                    print(f"Commercial search API status {response.status_code} for query: {q}")
-            except Exception as e:
-                print(f"Error harvesting commercial leads: {e}")
+                # --- STEP 2: VERIFY COMMERCIAL MONETIZATION THRESHOLD ---
+                # Only keep tasks that have an explicit advertised budget (e.g., >= $30 or ₦20,000)
+                if extracted_budget < 30.0:
+                    continue # Skip low-budget or unbudgeted noise
 
-    print(f"Successfully harvested {harvested_count} high-intent monetization leads.")
+                snippet = clean_summary[:300].replace("\n", " ") + "..."
+                task_hash = hashlib.sha256(link.encode()).hexdigest()[:16]
+                
+                # --- STEP 3: DYNAMIC PRICING FOR MONETIZATION ---
+                # Price your automated remediation patch as a fraction of their budget (e.g., 25% of their task budget)
+                playbook_price = round(extracted_budget * 0.25, 2)
+                if playbook_price < 25.0:
+                    playbook_price = 25.0 # Minimum baseline floor
+
+                domain = "Verified High-Budget Commercial Task"
+                if "paystack" in full_text.lower() or "stripe" in full_text.lower():
+                    domain = "Payment Gateway & Checkout Task"
+                elif "database" in full_text.lower() or "sql" in full_text.lower():
+                    domain = "Database & Concurrency Task"
+
+                # Save the budget-verified task into SQLite
+                await IntentRepository.save_intent(
+                    task_hash=task_hash,
+                    domain=domain,
+                    title=title,
+                    snippet=f"[Advertised Budget: ${extracted_budget}] {snippet}",
+                    source=link,
+                    price=playbook_price
+                )
+                harvested_count += 1
+                print(f"Monetization Lead Captured! Budget: ${extracted_budget} | Playbook Price: ${playbook_price} | {title}")
+
+        except Exception as e:
+            print(f"Error parsing budget feeds: {e}")
+
+    print(f"Successfully harvested {harvested_count} budget-verified monetization tasks.")
     return harvested_count
-
-# Alias for backwards compatibility
-harvest_monetization_leads = harvest_live_github_leads
