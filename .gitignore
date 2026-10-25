@@ -1,43 +1,13 @@
-
-# Python cache
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environments
-venv/
-.venv/
-env/
-
-# Environment variables and secrets
+*.pyc
+*.pyo
+*.pyd
 .env
-.env.*
-!.env.example
-
-# Local databases and SQLite sidecars
+.venv
+env/
+venv/
 *.db
-*.sqlite
-*.sqlite3
+*.db-journal
 *.db-wal
 *.db-shm
-*.sqlite-wal
-*.sqlite-shm
-
-# Test and coverage artifacts
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Logs
-*.log
-
-# Editor and operating system files
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
