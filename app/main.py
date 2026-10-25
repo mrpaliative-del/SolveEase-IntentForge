@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(
     title="IntentForge Enterprise Autonomous Engine",
     description="Autonomous B2B lead scrutiny, Telegram inline actions, TTL expiry, and Paystack reconciliation.",
-    version="15.0.0"
+    version="16.0.0"
 )
 
 app.add_middleware(
@@ -29,18 +29,18 @@ app.add_middleware(
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "sk_test_placeholder")
+PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "pk_test_your_actual_key_here")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 
 # Simple In-Memory Rate Limiter Dictionary
 REQUEST_LOGS = {}
 
-def check_rate_limit(client_ip: str, limit: int = 10, window: int = 60) -> bool:
+def check_rate_limit(client_ip: str, limit: int = 5, window: int = 60) -> bool:
     """Simple sliding-window rate limiter to protect endpoints."""
     now = time.time()
     if client_ip not in REQUEST_LOGS:
         REQUEST_LOGS[client_ip] = []
     
-    # Filter timestamps within window
     REQUEST_LOGS[client_ip] = [t for t in REQUEST_LOGS[client_ip] if now - t < window]
     if len(REQUEST_LOGS[client_ip]) >= limit:
         return False
@@ -82,7 +82,7 @@ async def startup_db_setup_and_purge():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # TTL EXPRIY: Purge leads older than 48 hours or noise
+        # TTL EXPIRY: Purge leads older than 48 hours or noise
         cursor.execute("""
             DELETE FROM intents 
             WHERE source LIKE '%dev.to%' 
@@ -111,7 +111,6 @@ async def dispatch_telegram_alert(title: str, domain: str, price: float, playboo
         f"💎 *Playbook Price (25%):* ${playbook_price:.2f} (Score: {score}/100)"
     )
     
-    # Telegram Inline Keyboard Markup
     reply_markup = {
         "inline_keyboard": [
             [
@@ -130,7 +129,6 @@ async def dispatch_telegram_alert(title: str, domain: str, price: float, playboo
         "reply_markup": reply_markup
     }
     
-    # Retry fallback loop (3 attempts)
     for attempt in range(3):
         try:
             async with httpx.AsyncClient() as client:
@@ -296,7 +294,6 @@ async def get_live_intents():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        # Exclude leads older than 48 hours dynamically on query
         cursor.execute("""
             SELECT task_hash, domain, title, snippet, source, price, playbook_price, scrutiny_score, verification_status, created_at 
             FROM intents 
@@ -350,7 +347,7 @@ async def paystack_webhook(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    return """
+    html_content = f"""
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
@@ -360,14 +357,14 @@ def serve_frontend():
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://js.paystack.co/v1/inline.js"></script>
     <script>
-        tailwind.config = {
+        tailwind.config = {{
             darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: { darker: '#090d16', cardBg: '#111827', accentGreen: '#10b981' }
-                }
-            }
-        }
+            theme: {{
+                extend: {{
+                    colors: {{ darker: '#090d16', cardBg: '#111827', accentGreen: '#10b981' }}
+                }}
+            }}
+        }}
     </script>
 </head>
 <body class="bg-[#090d16] text-slate-100 font-sans min-h-screen antialiased selection:bg-emerald-500 selection:text-black">
@@ -421,56 +418,56 @@ def serve_frontend():
         let allLeads = [];
 
         async function triggerHarvest() {
-            try {
-                const res = await fetch('/api/v1/harvest/live', { method: 'POST' });
+            try {{
+                const res = await fetch('/api/v1/harvest/live', {{ method: 'POST' }});
                 const data = await res.json();
-                if(res.ok) {
-                    alert(`Execution Loop Completed! Ingested ${data.live_leads_harvested || 0} fresh verified leads.`);
+                if(res.ok) {{
+                    alert(`Execution Loop Completed! Ingested ${{data.live_leads_harvested || 0}} fresh verified leads.`);
                     fetchLeads();
-                } else {
+                }} else {{
                     alert(data.detail || "Rate limit or execution error.");
-                }
-            } catch (err) { alert("Execution failed."); }
+                }}
+            }} catch (err) {{ alert("Execution failed."); }}
         }
 
         async function fetchLeads() {
             const container = document.getElementById('leads-container');
-            try {
+            try {{
                 const res = await fetch('/api/v1/live');
                 const data = await res.json();
-                if (data.status === 'success') {
+                if (data.status === 'success') {{
                     allLeads = data.leads;
-                    document.getElementById('lead-count').innerText = `${allLeads.length} Leads`;
+                    document.getElementById('lead-count').innerText = `${{allLeads.length}} Leads`;
                     container.innerHTML = allLeads.map(l => `
                         <div class="bg-cardBg border border-slate-800 hover:border-emerald-500/50 rounded-xl p-6 transition flex flex-col justify-between shadow-xl">
                             <div>
                                 <div class="flex items-center justify-between mb-3">
-                                    <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold rounded">${l.domain}</span>
-                                    <span class="px-2 py-0.5 bg-cyan-950 text-cyan-400 border border-cyan-800 text-[10px] font-semibold rounded">Score: ${l.scrutiny_score}/100</span>
+                                    <span class="px-2.5 py-1 bg-slate-800 text-emerald-400 border border-slate-700 text-xs font-semibold rounded">${{l.domain}}</span>
+                                    <span class="px-2 py-0.5 bg-cyan-950 text-cyan-400 border border-cyan-800 text-[10px] font-semibold rounded">Score: ${{l.scrutiny_score}}/100</span>
                                 </div>
-                                <h2 class="text-lg font-bold text-white mb-2">${l.title}</h2>
-                                <p class="text-slate-400 text-sm mb-4 leading-relaxed">${l.snippet}</p>
+                                <h2 class="text-lg font-bold text-white mb-2">${{l.title}}</h2>
+                                <p class="text-slate-400 text-sm mb-4 leading-relaxed">${{l.snippet}}</p>
                             </div>
                             <div>
                                 <div class="flex items-center justify-between bg-slate-900/90 border border-slate-800 rounded-lg p-3.5 mb-4">
                                     <div>
                                         <div class="text-[10px] uppercase text-slate-500 font-semibold">Budget</div>
-                                        <div class="text-emerald-400 font-bold">$${l.price.toLocaleString()}</div>
+                                        <div class="text-emerald-400 font-bold">$${{l.price.toLocaleString()}}</div>
                                     </div>
                                     <div class="text-right">
                                         <div class="text-[10px] uppercase text-slate-500 font-semibold">Playbook (25%)</div>
-                                        <div class="text-cyan-400 font-bold">$${l.playbook_price.toFixed(2)}</div>
+                                        <div class="text-cyan-400 font-bold">$${{l.playbook_price.toFixed(2)}}</div>
                                     </div>
                                 </div>
                                 <div class="grid grid-cols-2 gap-3">
-                                    <a href="${l.source}" target="_blank" class="text-center py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg text-xs transition">View Advert</a>
-                                    <button onclick="payWithPaystack('${l.task_hash}', ${l.playbook_price}, '${l.title.replace(/'/g, "")}')" class="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded-lg text-xs transition shadow-lg shadow-emerald-950/50">💳 Buy Playbook</button>
+                                    <a href="${{l.source}}" target="_blank" class="text-center py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg text-xs transition">View Advert</a>
+                                    <button onclick="payWithPaystack('${{l.task_hash}}', ${{l.playbook_price}}, '${{l.title.replace(/'/g, "")}}')" class="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded-lg text-xs transition shadow-lg shadow-emerald-950/50">💳 Buy Playbook</button>
                                 </div>
                             </div>
                         </div>
                     `).join('');
-                }
-            } catch (err) { container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Sync error.</div>`; }
+                }}
+            }} catch (err) {{ container.innerHTML = `<div class="col-span-full text-center py-12 text-red-400">Sync error.</div>`; }}
         }
 
         function payWithPaystack(taskHash, playbookPriceUSD, taskTitle) {
@@ -478,20 +475,20 @@ def serve_frontend():
             const customerEmail = prompt("Enter your email address to receive the solution playbook instantly:", "founder@solveease.com");
             if (!customerEmail || !customerEmail.includes("@")) return;
 
-            let handler = PaystackPop.setup({
-                key: 'pk_test_placeholder',
+            let handler = PaystackPop.setup({{
+                key: '{PAYSTACK_PUBLIC_KEY}',
                 email: customerEmail,
                 amount: amountInCents,
                 currency: "USD",
-                metadata: {
+                metadata: {{
                     task_hash: taskHash,
-                    custom_fields: [{ display_name: "Task", variable_name: "task", value: taskTitle }]
-                },
-                callback: function(response) {
-                    alert(`Payment Successful! Reference: ${response.reference}. Playbook dispatched.`);
-                },
-                onClose: function() { alert('Transaction window closed.'); }
-            });
+                    custom_fields: [{{ display_name: "Task", variable_name: "task", value: taskTitle }}]
+                }},
+                callback: function(response) {{
+                    alert(`Payment Successful! Reference: ${{response.reference}}. Playbook dispatched.`);
+                }},
+                onClose: function() {{ alert('Transaction window closed.'); }}
+            }});
             handler.openIframe();
         }
 
@@ -500,3 +497,4 @@ def serve_frontend():
 </body>
 </html>
     """
+    return html_content
